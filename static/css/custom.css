@@ -1,0 +1,25 @@
+.upload-area {
+    border: 2px dashed var(--bs-border-color) !important;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-area:hover {
+    border-color: var(--bs-primary) !important;
+    background-color: rgba(var(--bs-primary-rgb), 0.1);
+}
+
+.upload-area.drag-over {
+    border-color: var(--bs-primary) !important;
+    background-color: rgba(var(--bs-primary-rgb), 0.1);
+}
+
+#fileInfo .alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.progress {
+    height: 10px;
+}
