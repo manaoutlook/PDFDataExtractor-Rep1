@@ -85,15 +85,6 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     workbook = writer.book
                     worksheet = writer.sheets['Vehicle Inventory']
 
-                    # Format header row
-                    for col in range(len(df.columns)):
-                        cell = worksheet.cell(row=1, column=col + 1)
-                        cell.fill = openpyxl.styles.PatternFill(
-                            start_color="FFFF00",
-                            end_color="FFFF00",
-                            fill_type="solid"
-                        )
-
                     # Auto-adjust column widths
                     for column in worksheet.columns:
                         max_length = 0
