@@ -78,9 +78,21 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='Sheet1')
                     
-                    # Auto-adjust column widths
+                    # Format first row
                     workbook = writer.book
                     worksheet = writer.sheets['Sheet1']
+                    
+                    # Style for first row
+                    for col in range(1, len(df.columns) + 1):
+                        cell = worksheet.cell(row=1, column=col)
+                        cell.font = openpyxl.styles.Font(bold=True, size=14)
+                        cell.fill = openpyxl.styles.PatternFill(
+                            start_color="FFFF00",
+                            end_color="FFFF00",
+                            fill_type="solid"
+                        )
+                    
+                    # Auto-adjust column widths
                     for column in worksheet.columns:
                         max_length = 0
                         column = [cell for cell in column]
