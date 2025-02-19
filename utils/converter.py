@@ -26,6 +26,8 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
 
                 for line in lines:
+                    logging.debug(f"Processing line: {line}")
+
                     # Extract title
                     if 'Vehicles Inventory Report' in line:
                         title = line
@@ -39,45 +41,58 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                         continue
 
                     # Skip the header row itself
-                    if 'VIN' in line and any(header in line for header in expected_headers):
+                    if all(header in line for header in ['VIN', 'Make', 'Model']):
+                        logging.debug("Skipping header row")
                         continue
 
-                    # Process data row - look for VIN-like pattern
-                    vin_patterns = [
-                        r'^([A-Z0-9]{17})',  # Standard 17-char VIN
-                        r'^([A-Z0-9]{6,}(?=\s))',  # Shorter VIN-like identifier
-                        r'^((?:New\s)?[A-Z0-9]{1,5}\s?[A-Z0-9]{1,12}(?=\s))'  # Special cases like "New V"
+                    # Process data rows - using multiple patterns to match different VIN formats
+                    patterns = [
+                        r'^(5TFU[A-Z0-9]{13})',  # Toyota pattern
+                        r'^(WVWA[A-Z0-9]{12})',  # VW pattern
+                        r'^(1HGC[A-Z0-9]{13})',  # Honda pattern
+                        r'^(New\s*V)',           # Special case for "New V"
+                        r'^(D11\s*Car)',         # Special case for "D11 Car"
+                        r'^([A-Za-z0-9]{1,8})',  # Generic pattern for other cases
                     ]
 
-                    for pattern in vin_patterns:
-                        vin_match = re.match(pattern, line)
-                        if vin_match:
-                            # Get the VIN and remaining data
-                            vin = vin_match.group(1).strip()
-                            remaining = line[vin_match.end():].strip()
+                    matched = False
+                    for pattern in patterns:
+                        match = re.match(pattern, line)
+                        if match:
+                            vin = match.group(1).strip()
+                            remaining = line[match.end():].strip()
 
-                            # Split remaining data by multiple spaces
-                            parts = [p.strip() for p in re.split(r'\s{2,}', remaining)]
-                            parts = [p for p in parts if p.strip()]
+                            # Split remaining data by multiple spaces or tabs
+                            parts = [p for p in re.split(r'\s{2,}|\t+', remaining) if p.strip()]
 
                             # Combine VIN with remaining data
                             row_data = [vin] + parts
 
-                            # Clean and validate row data
-                            if len(row_data) >= 3:  # Must have at least VIN, Make, Model
-                                # Pad with empty strings if needed
+                            # Clean row data
+                            row_data = [col.strip() for col in row_data if col.strip()]
+
+                            # Must have at least VIN, Make, Model
+                            if len(row_data) >= 3:
+                                # Pad missing columns with empty strings
                                 while len(row_data) < len(expected_headers):
                                     row_data.append('')
 
-                                # Trim if too long
+                                # Trim excess columns
                                 row_data = row_data[:len(expected_headers)]
+
+                                logging.debug(f"Extracted row: {row_data}")
                                 data_rows.append(row_data)
-                                logging.debug(f"Added row: {row_data}")
-                            break  # Stop checking patterns if we found a match
+                                matched = True
+                                break
+
+                    if not matched:
+                        logging.debug(f"No match found for line: {line}")
 
             if not data_rows:
                 logging.error("No data rows were extracted from the PDF")
                 return None
+
+            logging.debug(f"Total rows extracted: {len(data_rows)}")
 
             # Create DataFrame
             df = pd.DataFrame(data_rows, columns=expected_headers)
@@ -95,7 +110,7 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     workbook = writer.book
                     worksheet = writer.sheets['Vehicle Inventory']
 
-                    # Add title and summary information
+                    # Add title
                     if title:
                         title_cell = worksheet.cell(row=1, column=1, value=title)
                         title_cell.font = Font(bold=True, size=14)
