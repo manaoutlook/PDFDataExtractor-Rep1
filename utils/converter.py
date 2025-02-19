@@ -39,42 +39,45 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     if any(x in line for x in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
                         continue
 
-                    # Process the line into columns
-                    columns = line.split()
+                    # Skip empty lines
+                    if not line:
+                        continue
 
-                    # Check if this is a data row
-                    if len(columns) >= 4:  # Minimum columns for a valid row
-                        # Skip the header row itself
-                        if not header_found and all(header in line for header in ['VIN', 'Make', 'Model']):
-                            header_found = True
-                            continue
+                    # Process the line
+                    if not header_found and 'VIN' in line and 'Make' in line and 'Model' in line:
+                        header_found = True
+                        continue
 
-                        # Process data row
-                        row_data = []
-                        current_col = ''
+                    if header_found:
+                        # Split the line into parts
+                        parts = line.split()
+                        if len(parts) >= 3:  # Ensure we have at least VIN, Make, and Model
+                            current_row = []
+                            current_field = ''
 
-                        # Combine words that belong to the same column
-                        for word in columns:
-                            if word in expected_headers:
-                                if current_col:
-                                    row_data.append(current_col.strip())
-                                    current_col = ''
-                            else:
-                                if current_col:
-                                    current_col += ' ' + word
+                            for word in parts:
+                                # If we find something that looks like a VIN (alphanumeric, length > 10)
+                                if len(word) > 10 and any(c.isalpha() for c in word) and any(c.isdigit() for c in word):
+                                    if current_field:
+                                        current_row.append(current_field.strip())
+                                        current_field = ''
+                                    current_row.append(word)
                                 else:
-                                    current_col = word
+                                    if current_field:
+                                        current_field += ' ' + word
+                                    else:
+                                        current_field = word
 
-                        # Add the last column
-                        if current_col:
-                            row_data.append(current_col.strip())
+                            # Add the last field if any
+                            if current_field:
+                                current_row.append(current_field.strip())
 
-                        # Only add rows that have sufficient data
-                        if len(row_data) >= 4:
-                            # Ensure row has correct number of columns
-                            while len(row_data) < len(expected_headers):
-                                row_data.append('')
-                            data_rows.append(row_data[:len(expected_headers)])
+                            # Only add rows that look valid (have enough data)
+                            if len(current_row) >= 3 and len(current_row[0]) > 10:  # VIN is typically > 10 chars
+                                # Ensure we have exactly the right number of columns
+                                while len(current_row) < len(expected_headers):
+                                    current_row.append('')
+                                data_rows.append(current_row[:len(expected_headers)])
 
             # Create DataFrame
             df = pd.DataFrame(data_rows, columns=expected_headers)
