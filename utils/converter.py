@@ -18,13 +18,25 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             header_found = False
             current_row = []
             
+            title = None
+            summary_info = []
+            
             for page in pdf_reader.pages:
                 text = page.extract_text()
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
 
                 for line in lines:
-                    # Skip summary lines and empty lines
-                    if any(x in line.lower() for x in ['total vehicles:', 'active vehicles:', 'vehicles in maintenance:']) or not line.strip():
+                    # Capture title
+                    if 'Vehicles Inventory Report' in line:
+                        title = line
+                        continue
+                    
+                    # Capture summary information
+                    if any(x in line.lower() for x in ['total vehicles:', 'active vehicles:', 'vehicles in maintenance:']):
+                        summary_info.append(line)
+                        continue
+                    
+                    if not line.strip():
                         continue
                     
                     # Skip the header row itself
@@ -80,10 +92,19 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             if output_format == 'excel':
                 output_path = f"{temp_file.name}.xlsx"
                 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Vehicle Inventory')
+                    df.to_excel(writer, index=False, sheet_name='Vehicle Inventory', startrow=5)
 
                     workbook = writer.book
                     worksheet = writer.sheets['Vehicle Inventory']
+                    
+                    # Add title and summary information
+                    if title:
+                        worksheet.cell(row=1, column=1, value=title)
+                    for idx, info in enumerate(summary_info, start=2):
+                        worksheet.cell(row=idx, column=1, value=info)
+                        
+                    # Add empty row before table
+                    worksheet.cell(row=4, column=1, value='')
 
                     # Auto-adjust column widths
                     for column in worksheet.columns:
