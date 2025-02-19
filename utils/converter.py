@@ -32,52 +32,60 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
 
             for page in pdf_reader.pages:
                 text = page.extract_text()
+
+                # Split into lines and clean
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
 
                 for line in lines:
-                    # Skip summary lines
+                    # Skip summary and empty lines
                     if any(x in line for x in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
                         continue
 
-                    # Skip empty lines
                     if not line:
                         continue
 
-                    # Process the line
-                    if not header_found and 'VIN' in line and 'Make' in line and 'Model' in line:
+                    # Skip the header row itself
+                    if not header_found and all(header in line for header in ['VIN', 'Make', 'Model']):
                         header_found = True
                         continue
 
+                    # Process data rows
                     if header_found:
-                        # Split the line into parts
-                        parts = line.split()
-                        if len(parts) >= 3:  # Ensure we have at least VIN, Make, and Model
-                            current_row = []
-                            current_field = ''
+                        # Split the line into words
+                        words = line.split()
 
-                            for word in parts:
-                                # If we find something that looks like a VIN (alphanumeric, length > 10)
-                                if len(word) > 10 and any(c.isalpha() for c in word) and any(c.isdigit() for c in word):
-                                    if current_field:
-                                        current_row.append(current_field.strip())
-                                        current_field = ''
-                                    current_row.append(word)
+                        # Skip lines that are too short
+                        if len(words) < 3:
+                            continue
+
+                        row_data = []
+                        current_field = []
+
+                        for word in words:
+                            # Check if this word looks like a VIN
+                            is_vin = len(word) > 10 and any(c.isalpha() for c in word) and any(c.isdigit() for c in word)
+
+                            if is_vin and not row_data:  # Start of new row
+                                row_data = [word]
+                            elif row_data:  # Already processing a row
+                                if len(row_data) < len(expected_headers):
+                                    row_data.append(word)
                                 else:
-                                    if current_field:
-                                        current_field += ' ' + word
+                                    # If we have all columns and find what looks like a VIN, start a new row
+                                    if is_vin:
+                                        if len(row_data) >= 3:  # Only add if we have at least 3 columns
+                                            data_rows.append(row_data[:len(expected_headers)])
+                                        row_data = [word]
                                     else:
-                                        current_field = word
+                                        # Append to the last column if we haven't found a new VIN
+                                        row_data[-1] = row_data[-1] + ' ' + word
 
-                            # Add the last field if any
-                            if current_field:
-                                current_row.append(current_field.strip())
-
-                            # Only add rows that look valid (have enough data)
-                            if len(current_row) >= 3 and len(current_row[0]) > 10:  # VIN is typically > 10 chars
-                                # Ensure we have exactly the right number of columns
-                                while len(current_row) < len(expected_headers):
-                                    current_row.append('')
-                                data_rows.append(current_row[:len(expected_headers)])
+                        # Add the last row if it's valid
+                        if row_data and len(row_data) >= 3:
+                            # Pad with empty strings if needed
+                            while len(row_data) < len(expected_headers):
+                                row_data.append('')
+                            data_rows.append(row_data[:len(expected_headers)])
 
             # Create DataFrame
             df = pd.DataFrame(data_rows, columns=expected_headers)
