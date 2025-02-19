@@ -13,79 +13,65 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
         ]
 
         with open(pdf_path, 'rb') as file:
-            # Initialize PDF reader
             pdf_reader = PyPDF2.PdfReader(file)
             data_rows = []
-            title = None
-            summary_info = []
-
-            logging.debug(f"Processing PDF with {len(pdf_reader.pages)} pages")
-
-            for page_num, page in enumerate(pdf_reader.pages):
+            header_found = False
+            current_row = []
+            
+            for page in pdf_reader.pages:
                 text = page.extract_text()
-                logging.debug(f"Page {page_num + 1} text extracted: {text[:200]}...")  # Log first 200 chars
+                lines = [line.strip() for line in text.split('\n') if line.strip()]
 
-                # Process text line by line
-                lines = text.split('\n')
-                for line_num, line in enumerate(lines):
-                    line = line.strip()
-                    logging.debug(f"Processing line {line_num}: {line}")
-
-                    if not line:
+                for line in lines:
+                    # Skip summary lines and empty lines
+                    if any(x in line.lower() for x in ['total vehicles:', 'active vehicles:', 'vehicles in maintenance:']) or not line.strip():
+                        continue
+                    
+                    # Skip the header row itself
+                    if 'VIN' in line and any(header in line for header in expected_headers):
+                        header_found = True
                         continue
 
-                    # Extract title
-                    if 'Vehicles Inventory Report' in line:
-                        title = line
-                        logging.debug(f"Found title: {title}")
-                        continue
+                    # Process data rows
+                    if header_found:
+                        # Match for VIN-like pattern at start of line
+                        vin_match = re.match(r'^([A-Z0-9]{17}|[A-Z0-9]{6,}(?=\s))', line)
+                        
+                        if vin_match:
+                            if current_row:
+                                if len(current_row) > 0:  # Only add non-empty rows
+                                    data_rows.append(current_row[:len(expected_headers)])
+                            
+                            # Split remaining line into columns
+                            remaining = line[vin_match.end():].strip()
+                            # Split by multiple spaces while preserving internal single spaces
+                            parts = [p.strip() for p in re.split(r'\s{2,}', remaining)]
+                            current_row = [vin_match.group(1)] + parts
+                            
+                            # Filter out any empty or whitespace-only entries
+                            current_row = [col for col in current_row if col.strip()]
 
-                    # Extract summary information
-                    if any(x in line for x in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
-                        summary_info.append(line)
-                        logging.debug(f"Found summary info: {line}")
-                        continue
+                        # Ensure row doesn't exceed header count
+                        if len(current_row) > len(expected_headers):
+                            current_row = current_row[:len(expected_headers)]
 
-                    # Skip header row
-                    if all(header in line for header in ['VIN', 'Make', 'Model']):
-                        logging.debug("Skipping header row")
-                        continue
+            # Add the last row if exists
+            if current_row:
+                data_rows.append(current_row[:len(expected_headers)])
 
-                    # More flexible VIN pattern - at least 10 characters with mix of letters and numbers
-                    potential_vins = re.finditer(r'[A-HJ-NPR-Z0-9]{10,}', line)
+            # Clean and organize the data
+            clean_rows = []
+            for row in data_rows:
+                if len(row) > 0:  # Only process non-empty rows
+                    # Pad or trim the row to match headers
+                    padded_row = row + [''] * (len(expected_headers) - len(row))
+                    clean_row = padded_row[:len(expected_headers)]
+                    # Only add rows that have a valid VIN
+                    if clean_row[0].strip() and len(clean_row[0].strip()) >= 6:
+                        clean_rows.append(clean_row)
 
-                    for match in potential_vins:
-                        vin = match.group()
-                        if len(vin) >= 10 and any(c.isalpha() for c in vin) and any(c.isdigit() for c in vin):
-                            # Get the rest of the line after the VIN
-                            rest_of_line = line[match.end():].strip()
-                            row_data = [vin]  # Start with VIN
-
-                            # Split remaining data and clean
-                            remaining_fields = [f for f in rest_of_line.split() if f]
-                            row_data.extend(remaining_fields)
-
-                            # Only process rows that have enough data
-                            if len(row_data) >= 3:  # At least VIN, Make, and Model
-                                # Pad with empty strings if needed
-                                while len(row_data) < len(expected_headers):
-                                    row_data.append('')
-                                # Trim if too long
-                                row_data = row_data[:len(expected_headers)]
-                                data_rows.append(row_data)
-                                logging.debug(f"Added row: {row_data}")
-
-            if not data_rows:
-                logging.error("No data rows were extracted from the PDF")
-                return None
-
-            logging.debug(f"Total rows extracted: {len(data_rows)}")
-            logging.debug("Sample of extracted rows:")
-            for i, row in enumerate(data_rows[:3]):  # Log first 3 rows
-                logging.debug(f"Row {i}: {row}")
-
-            # Create DataFrame
-            df = pd.DataFrame(data_rows, columns=expected_headers)
+            df = pd.DataFrame(clean_rows, columns=expected_headers)
+            # Remove any duplicate rows
             df = df.drop_duplicates(subset=['VIN'], keep='first')
 
             # Create temporary file for output
@@ -94,26 +80,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             if output_format == 'excel':
                 output_path = f"{temp_file.name}.xlsx"
                 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                    # Write the data starting from row 5 to leave space for title and summary
-                    df.to_excel(writer, index=False, sheet_name='Vehicle Inventory', startrow=5)
+                    df.to_excel(writer, index=False, sheet_name='Vehicle Inventory')
 
                     workbook = writer.book
                     worksheet = writer.sheets['Vehicle Inventory']
-
-                    # Add title and summary information
-                    if title:
-                        cell = worksheet.cell(row=1, column=1, value=title)
-                        cell.font = openpyxl.styles.Font(bold=True, size=12)
-
-                    # Add summary information
-                    for idx, info in enumerate(summary_info, start=2):
-                        cell = worksheet.cell(row=idx, column=1, value=info)
-                        cell.font = openpyxl.styles.Font(size=11)
-
-                    # Merge cells for title and summary
-                    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(expected_headers))
-                    for idx in range(2, 2 + len(summary_info)):
-                        worksheet.merge_cells(start_row=idx, start_column=1, end_row=idx, end_column=len(expected_headers))
 
                     # Auto-adjust column widths
                     for column in worksheet.columns:
