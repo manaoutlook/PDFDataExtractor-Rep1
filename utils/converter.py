@@ -76,22 +76,11 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             if output_format == 'excel':
                 output_path = f"{temp_file.name}.xlsx"
                 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Vehicle Inventory')
-
-                    # Format the header row
-                    workbook = writer.book
-                    worksheet = writer.sheets['Vehicle Inventory']
-
-                    # Yellow background for header row
-                    for col in range(len(df.columns)):
-                        cell = worksheet.cell(row=1, column=col + 1)
-                        cell.fill = openpyxl.styles.PatternFill(
-                            start_color="FFFF00",
-                            end_color="FFFF00",
-                            fill_type="solid"
-                        )
-
+                    df.to_excel(writer, index=False, sheet_name='Sheet1')
+                    
                     # Auto-adjust column widths
+                    workbook = writer.book
+                    worksheet = writer.sheets['Sheet1']
                     for column in worksheet.columns:
                         max_length = 0
                         column = [cell for cell in column]
