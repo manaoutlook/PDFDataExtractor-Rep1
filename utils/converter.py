@@ -49,10 +49,14 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     if header_found:
                         logging.debug(f"Processing line: {line}")
                         
-                        # Try to identify any potential data row by looking for patterns
+                        # Skip empty lines and known headers
+                        if not line.strip() or any(header in line for header in expected_headers):
+                            continue
+                            
+                        # Try to identify any potential data row
                         if re.search(r'[A-Z0-9]', line):  # Line contains alphanumeric characters
-                            # Split the line by any whitespace
-                            parts = [p.strip() for p in re.split(r'\s+', line) if p.strip()]
+                            # Split the line by multiple spaces while preserving single spaces
+                            parts = [p.strip() for p in re.split(r'\s{2,}', line) if p.strip()]
                             
                             if parts:
                                 if current_row and len(current_row) > 0:
@@ -73,12 +77,22 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             if current_row:
                 data_rows.append(current_row[:len(expected_headers)])
 
+            # Debug logging for extracted content
+            logging.debug("=== Extracted Content ===")
+            for page_num, page in enumerate(pdf_reader.pages):
+                logging.debug(f"=== Page {page_num + 1} ===")
+                page_text = page.extract_text()
+                logging.debug(page_text)
+                logging.debug("=" * 50)
+
             if not data_rows:
-                logging.error("No data rows were extracted from the PDF. Text content:")
-                for page_num, page in enumerate(pdf_reader.pages):
-                    logging.error(f"Page {page_num + 1} content:")
-                    logging.error(page.extract_text())
+                logging.error("No data rows were extracted from the PDF.")
                 return None
+
+            # Log extracted rows for debugging
+            logging.debug("=== Extracted Rows ===")
+            for row in data_rows:
+                logging.debug(f"Row: {row}")
 
             # Clean and organize the data
             clean_rows = []
