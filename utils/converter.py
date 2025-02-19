@@ -47,19 +47,20 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
 
                     # Process data rows
                     if header_found:
-                        # Match for VIN-like pattern with more flexible pattern
-                        vin_match = re.match(r'^([A-Z0-9]{5,17}(?=\s|$))', line)
+                        # Match any alphanumeric sequence at the start of the line
+                        vin_match = re.match(r'^([A-Z0-9]+)', line)
                         
                         if vin_match:
-                            if current_row:
-                                if len(current_row) > 0:  # Only add non-empty rows
-                                    data_rows.append(current_row[:len(expected_headers)])
+                            if current_row and len(current_row) > 0:
+                                data_rows.append(current_row[:len(expected_headers)])
                             
                             # Split remaining line into columns
                             remaining = line[vin_match.end():].strip()
-                            # Split by multiple spaces while preserving internal single spaces
-                            parts = [p.strip() for p in re.split(r'\s{2,}', remaining)]
+                            # Split by multiple spaces or tabs
+                            parts = [p.strip() for p in re.split(r'[\t\s]{2,}', remaining) if p.strip()]
                             current_row = [vin_match.group(1)] + parts
+                            
+                            logging.debug(f"Extracted row: {current_row}")
                             
                             # Filter out any empty or whitespace-only entries
                             current_row = [col for col in current_row if col.strip()]
