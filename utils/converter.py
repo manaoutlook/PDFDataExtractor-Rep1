@@ -33,8 +33,8 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                         continue
 
                     if header_found:
-                        # VIN pattern matching (17 characters, alphanumeric)
-                        vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', line)
+                        # More flexible VIN pattern (any alphanumeric at start of line)
+                        vin_match = re.match(r'([A-Za-z0-9][A-Za-z0-9\s]*?(?=\s{2,}|\s*$))', line)
 
                         if vin_match:
                             if current_row:
