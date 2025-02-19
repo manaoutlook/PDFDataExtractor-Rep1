@@ -17,78 +17,58 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
         str: Path to the converted file
     """
     try:
-        # Define expected headers
-        expected_headers = [
-            'VIN', 'Make', 'Model', 'Year', 'Status', 'Location', 'Make Code', 'Drive Type'
-        ]
-
         # Read PDF
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-
+            
             # Extract text from all pages
-            data_rows = []
-            header_found = False
-
+            all_text = []
             for page in pdf_reader.pages:
                 text = page.extract_text()
-
-                # Split into lines and clean
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
-
-                for line in lines:
-                    # Skip summary and empty lines
-                    if any(x in line for x in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
-                        continue
-
-                    if not line:
-                        continue
-
-                    # Skip the header row itself
-                    if not header_found and all(header in line for header in ['VIN', 'Make', 'Model']):
-                        header_found = True
-                        continue
-
-                    # Process data rows
-                    if header_found:
-                        # Split the line into words
-                        words = line.split()
-
-                        # Skip lines that are too short
-                        if len(words) < 3:
-                            continue
-
-                        row_data = []
-                        current_field = []
-
-                        for word in words:
-                            # Check if this word looks like a VIN
-                            is_vin = len(word) > 10 and any(c.isalpha() for c in word) and any(c.isdigit() for c in word)
-
-                            if is_vin and not row_data:  # Start of new row
-                                row_data = [word]
-                            elif row_data:  # Already processing a row
-                                if len(row_data) < len(expected_headers):
-                                    row_data.append(word)
-                                else:
-                                    # If we have all columns and find what looks like a VIN, start a new row
-                                    if is_vin:
-                                        if len(row_data) >= 3:  # Only add if we have at least 3 columns
-                                            data_rows.append(row_data[:len(expected_headers)])
-                                        row_data = [word]
-                                    else:
-                                        # Append to the last column if we haven't found a new VIN
-                                        row_data[-1] = row_data[-1] + ' ' + word
-
-                        # Add the last row if it's valid
-                        if row_data and len(row_data) >= 3:
-                            # Pad with empty strings if needed
-                            while len(row_data) < len(expected_headers):
-                                row_data.append('')
-                            data_rows.append(row_data[:len(expected_headers)])
+                all_text.extend(lines)
+            
+            # Try to identify table structure
+            data_rows = []
+            headers = None
+            
+            for line in all_text:
+                # Skip empty lines
+                if not line:
+                    continue
+                    
+                # Split the line into columns
+                columns = line.split()
+                
+                # If headers aren't set, use the first non-empty row
+                if not headers and len(columns) > 1:
+                    headers = columns
+                    continue
+                    
+                # Process data rows
+                if headers and len(columns) > 0:
+                    # Try to maintain the same number of columns as headers
+                    row_data = []
+                    current_col = ""
+                    
+                    for word in columns:
+                        if len(row_data) < len(headers) - 1:
+                            row_data.append(word)
+                        else:
+                            current_col += " " + word if current_col else word
+                            
+                    if current_col:
+                        row_data.append(current_col)
+                        
+                    # Only add rows that have data
+                    if len(row_data) > 0:
+                        # Pad with empty strings if needed
+                        while len(row_data) < len(headers):
+                            row_data.append('')
+                        data_rows.append(row_data[:len(headers)])
 
             # Create DataFrame
-            df = pd.DataFrame(data_rows, columns=expected_headers)
+            df = pd.DataFrame(data_rows, columns=headers if headers else range(len(data_rows[0])))
 
             # Create temporary file for output
             temp_file = tempfile.NamedTemporaryFile(delete=False)
