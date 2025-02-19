@@ -23,14 +23,30 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             
             # Extract text from all pages
             all_text = []
+            data_rows = []
+            headers = None
+            
             for page in pdf_reader.pages:
                 text = page.extract_text()
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
-                all_text.extend(lines)
-            
-            # Try to identify table structure
-            data_rows = []
-            headers = None
+                
+                for line in lines:
+                    # Look for common transaction indicators
+                    if any(keyword in line.lower() for keyword in ['date', 'description', 'amount', 'balance', 'transaction']):
+                        if not headers:
+                            # Try to identify header row
+                            potential_headers = line.split()
+                            if len(potential_headers) >= 3:  # Assuming valid headers have at least 3 columns
+                                headers = potential_headers
+                                continue
+                    
+                    # Look for transaction data (typically contains dates and amounts)
+                    if line and any(char.isdigit() for char in line):
+                        # Check if line matches transaction pattern (date + description + amount)
+                        if any(month in line.lower() for month in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']):
+                            columns = line.split()
+                            if len(columns) >= 3:  # Minimum columns for a transaction
+                                data_rows.append(columns)
             
             for line in all_text:
                 # Skip empty lines
