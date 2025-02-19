@@ -50,9 +50,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                         r'^(5TFU[A-Z0-9]{13})',  # Toyota pattern
                         r'^(WVWA[A-Z0-9]{12})',  # VW pattern
                         r'^(1HGC[A-Z0-9]{13})',  # Honda pattern
+                        r'^(1HGCM[A-Z0-9]{12})', # Additional Honda pattern
                         r'^(New\s*V)',           # Special case for "New V"
                         r'^(D11\s*Car)',         # Special case for "D11 Car"
-                        r'^([A-Za-z0-9]{1,8})',  # Generic pattern for other cases
+                        r'^([A-Z0-9]{17})',      # Generic 17-character VIN pattern
                     ]
 
                     matched = False
