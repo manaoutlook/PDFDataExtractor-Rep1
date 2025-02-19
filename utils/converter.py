@@ -72,6 +72,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             if current_row:
                 data_rows.append(current_row[:len(expected_headers)])
 
+            if not data_rows:
+                logging.error("No data rows were extracted from the PDF")
+                return None
+
             # Clean and organize the data
             clean_rows = []
             for row in data_rows:
@@ -79,9 +83,13 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     # Pad or trim the row to match headers
                     padded_row = row + [''] * (len(expected_headers) - len(row))
                     clean_row = padded_row[:len(expected_headers)]
-                    # Only add rows that have a valid VIN
-                    if clean_row[0].strip() and len(clean_row[0].strip()) >= 6:
+                    # Add all rows with non-empty VIN
+                    if clean_row[0].strip():
                         clean_rows.append(clean_row)
+
+            if not clean_rows:
+                logging.error("No valid rows found after cleaning")
+                return None
 
             df = pd.DataFrame(clean_rows, columns=expected_headers)
             # Remove any duplicate rows
