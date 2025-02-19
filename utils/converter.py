@@ -47,20 +47,20 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
 
                     # Process data rows
                     if header_found:
-                        # Match any alphanumeric sequence at the start of the line
-                        vin_match = re.match(r'^([A-Z0-9]+)', line)
+                        logging.debug(f"Processing line: {line}")
                         
-                        if vin_match:
-                            if current_row and len(current_row) > 0:
-                                data_rows.append(current_row[:len(expected_headers)])
+                        # Try to identify any potential data row by looking for patterns
+                        if re.search(r'[A-Z0-9]', line):  # Line contains alphanumeric characters
+                            # Split the line by any whitespace
+                            parts = [p.strip() for p in re.split(r'\s+', line) if p.strip()]
                             
-                            # Split remaining line into columns
-                            remaining = line[vin_match.end():].strip()
-                            # Split by multiple spaces or tabs
-                            parts = [p.strip() for p in re.split(r'[\t\s]{2,}', remaining) if p.strip()]
-                            current_row = [vin_match.group(1)] + parts
-                            
-                            logging.debug(f"Extracted row: {current_row}")
+                            if parts:
+                                if current_row and len(current_row) > 0:
+                                    logging.debug(f"Adding previous row: {current_row}")
+                                    data_rows.append(current_row[:len(expected_headers)])
+                                
+                                current_row = parts
+                                logging.debug(f"New row extracted: {current_row}")
                             
                             # Filter out any empty or whitespace-only entries
                             current_row = [col for col in current_row if col.strip()]
