@@ -47,8 +47,8 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
 
                     # Process data rows
                     if header_found:
-                        # Match for VIN-like pattern at start of line
-                        vin_match = re.match(r'^([A-Z0-9]{17}|[A-Z0-9]{6,}(?=\s))', line)
+                        # Match for VIN-like pattern with more flexible pattern
+                        vin_match = re.match(r'^([A-Z0-9]{5,17}(?=\s|$))', line)
                         
                         if vin_match:
                             if current_row:
@@ -73,7 +73,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                 data_rows.append(current_row[:len(expected_headers)])
 
             if not data_rows:
-                logging.error("No data rows were extracted from the PDF")
+                logging.error("No data rows were extracted from the PDF. Text content:")
+                for page_num, page in enumerate(pdf_reader.pages):
+                    logging.error(f"Page {page_num + 1} content:")
+                    logging.error(page.extract_text())
                 return None
 
             # Clean and organize the data
