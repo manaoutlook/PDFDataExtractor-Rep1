@@ -4,91 +4,71 @@ import tempfile
 import logging
 from typing import Optional
 import openpyxl
+import re
 
 def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
-    """
-    Convert PDF to Excel or CSV format with proper table structure preservation
-
-    Args:
-        pdf_path (str): Path to the PDF file
-        output_format (str): Either 'excel' or 'csv'
-
-    Returns:
-        str: Path to the converted file
-    """
     try:
-        # Define expected headers
         expected_headers = [
             'VIN', 'Make', 'Model', 'Year', 'Status', 'Location', 'Make Code', 'Drive Type'
         ]
 
-        # Read PDF
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-
-            # Extract text from all pages
             data_rows = []
             header_found = False
+            current_row = []
 
             for page in pdf_reader.pages:
                 text = page.extract_text()
-
-                # Split into lines and clean
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
 
                 for line in lines:
-                    # Skip summary and empty lines
-                    if any(x in line for x in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
+                    # Skip summary lines
+                    if any(x in line.lower() for x in ['total vehicles:', 'active vehicles:', 'vehicles in maintenance:']):
                         continue
 
-                    if not line:
-                        continue
-
-                    # Skip the header row itself
-                    if not header_found and all(header in line for header in ['VIN', 'Make', 'Model']):
+                    # Detect header row more flexibly
+                    if not header_found and 'VIN' in line:
                         header_found = True
                         continue
 
-                    # Process data rows
                     if header_found:
-                        # Split the line into words
-                        words = line.split()
+                        # VIN pattern matching (17 characters, alphanumeric)
+                        vin_match = re.search(r'[A-HJ-NPR-Z0-9]{17}', line)
 
-                        # Skip lines that are too short
-                        if len(words) < 3:
-                            continue
+                        if vin_match:
+                            if current_row:
+                                # Save previous row if exists
+                                data_rows.append(current_row[:len(expected_headers)])
 
-                        row_data = []
-                        current_field = []
+                            # Start new row with VIN
+                            current_row = [vin_match.group(0)]
 
-                        for word in words:
-                            # Check if this word looks like a VIN
-                            is_vin = len(word) > 10 and any(c.isalpha() for c in word) and any(c.isdigit() for c in word)
+                            # Get remaining data from the line
+                            remaining = line[vin_match.end():].strip()
+                            parts = [p.strip() for p in remaining.split('  ') if p.strip()]
+                            current_row.extend(parts)
+                        elif current_row:
+                            # Append to last column if it's continuation data
+                            parts = [p.strip() for p in line.split('  ') if p.strip()]
+                            current_row.extend(parts)
 
-                            if is_vin and not row_data:  # Start of new row
-                                row_data = [word]
-                            elif row_data:  # Already processing a row
-                                if len(row_data) < len(expected_headers):
-                                    row_data.append(word)
-                                else:
-                                    # If we have all columns and find what looks like a VIN, start a new row
-                                    if is_vin:
-                                        if len(row_data) >= 3:  # Only add if we have at least 3 columns
-                                            data_rows.append(row_data[:len(expected_headers)])
-                                        row_data = [word]
-                                    else:
-                                        # Append to the last column if we haven't found a new VIN
-                                        row_data[-1] = row_data[-1] + ' ' + word
+                        # Ensure row doesn't exceed header count
+                        if len(current_row) > len(expected_headers):
+                            current_row = current_row[:len(expected_headers)]
 
-                        # Add the last row if it's valid
-                        if row_data and len(row_data) >= 3:
-                            # Pad with empty strings if needed
-                            while len(row_data) < len(expected_headers):
-                                row_data.append('')
-                            data_rows.append(row_data[:len(expected_headers)])
+            # Add the last row if exists
+            if current_row:
+                data_rows.append(current_row[:len(expected_headers)])
 
-            # Create DataFrame
-            df = pd.DataFrame(data_rows, columns=expected_headers)
+            # Create DataFrame with proper column alignment
+            clean_rows = []
+            for row in data_rows:
+                # Pad rows that are too short
+                padded_row = row + [''] * (len(expected_headers) - len(row))
+                clean_rows.append(padded_row[:len(expected_headers)])
+
+            df = pd.DataFrame(clean_rows, columns=expected_headers)
 
             # Create temporary file for output
             temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -98,11 +78,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='Vehicle Inventory')
 
-                    # Format the header row
                     workbook = writer.book
                     worksheet = writer.sheets['Vehicle Inventory']
 
-                    # Yellow background for header row
+                    # Format header row
                     for col in range(len(df.columns)):
                         cell = worksheet.cell(row=1, column=col + 1)
                         cell.fill = openpyxl.styles.PatternFill(
@@ -114,7 +93,6 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     # Auto-adjust column widths
                     for column in worksheet.columns:
                         max_length = 0
-                        column = [cell for cell in column]
                         for cell in column:
                             try:
                                 if len(str(cell.value)) > max_length:
