@@ -33,17 +33,21 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                         continue
 
                     if header_found:
-                        # Split line by multiple spaces to preserve column structure
-                        parts = [p.strip() for p in re.split(r'\s{2,}', line) if p.strip()]
+                        # Match VIN pattern at start of line
+                        vin_match = re.match(r'^([A-Z0-9]{17}|[A-Z0-9]+(?=\s))', line)
                         
-                        if parts and re.match(r'^[A-Za-z0-9]', parts[0]):
+                        if vin_match:
                             if current_row:
                                 data_rows.append(current_row[:len(expected_headers)])
-                            current_row = parts[:len(expected_headers)]
-                        elif current_row:
-                            # Append to last column if it's continuation data
-                            parts = [p.strip() for p in line.split('  ') if p.strip()]
-                            current_row.extend(parts)
+                            
+                            # Split rest of line by fixed positions
+                            remaining = line[vin_match.end():].strip()
+                            parts = re.findall(r'\S+(?:\s+\S+)*?(?=\s{2,}|\s*$)', remaining)
+                            current_row = [vin_match.group(1)] + parts
+                            
+                            # Ensure we don't exceed headers
+                            if len(current_row) > len(expected_headers):
+                                current_row = current_row[:len(expected_headers)]
 
                         # Ensure row doesn't exceed header count
                         if len(current_row) > len(expected_headers):
