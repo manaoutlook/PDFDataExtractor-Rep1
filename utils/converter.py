@@ -26,14 +26,15 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                 lines = [line.strip() for line in text.split('\n') if line.strip()]
 
                 for line in lines:
-                    # Capture title
+                    # Extract title and date
                     if 'Vehicles Inventory Report' in line:
-                        title = line
+                        title = line.strip()
                         continue
                     
-                    # Capture summary information
-                    if any(x in line.lower() for x in ['total vehicles:', 'active vehicles:', 'vehicles in maintenance:']):
-                        summary_info.append(line)
+                    # Extract summary information using more specific patterns
+                    if any(pattern in line for pattern in ['Total Vehicles:', 'Active Vehicles:', 'Vehicles in Maintenance:']):
+                        cleaned_line = ' '.join(line.split())  # Normalize spaces
+                        summary_info.append(cleaned_line)
                         continue
                     
                     if not line.strip():
@@ -98,13 +99,23 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
                     worksheet = writer.sheets['Vehicle Inventory']
                     
                     # Add title and summary information
+                    # Add title with bold formatting
                     if title:
-                        worksheet.cell(row=1, column=1, value=title)
+                        cell = worksheet.cell(row=1, column=1, value=title)
+                        cell.font = openpyxl.styles.Font(bold=True, size=12)
+                        
+                    # Add summary information
                     for idx, info in enumerate(summary_info, start=2):
-                        worksheet.cell(row=idx, column=1, value=info)
+                        cell = worksheet.cell(row=idx, column=1, value=info)
+                        cell.font = openpyxl.styles.Font(size=11)
                         
                     # Add empty row before table
                     worksheet.cell(row=4, column=1, value='')
+                    
+                    # Merge cells for title and summary info
+                    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(expected_headers))
+                    for idx in range(2, 2 + len(summary_info)):
+                        worksheet.merge_cells(start_row=idx, start_column=1, end_row=idx, end_column=len(expected_headers))
 
                     # Auto-adjust column widths
                     for column in worksheet.columns:
