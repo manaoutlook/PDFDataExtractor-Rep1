@@ -51,7 +51,8 @@ def upload_file():
                     download_name=f'converted.{extension}'
                 )
             else:
-                return jsonify({'error': 'Conversion failed'}), 500
+                logging.error("PDF conversion returned None")
+                return jsonify({'error': 'Could not extract data from PDF. Please ensure the file is not corrupted and contains valid data.'}), 500
     
     except Exception as e:
         logging.error(f"Error during conversion: {str(e)}")
