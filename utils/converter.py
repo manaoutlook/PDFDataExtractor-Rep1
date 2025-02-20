@@ -73,21 +73,14 @@ def extract_transaction_data(text: str) -> List[Dict]:
             # Find amounts in the remaining text
             amounts = re.findall(amount_pattern, remaining)
 
+            # Process amounts based on position
             if amounts:
-                logging.debug(f"Found amounts: {amounts}")
-                # Process description (text between date and first amount)
-                desc_end = remaining.find(amounts[0])
-                current_transaction['Description'] = remaining[:desc_end].strip()
-
-                # Process amounts based on position
-                if len(amounts) >= 2:  # We have both transaction amount and balance
-                    last_amount = amounts[-1].replace('$', '').strip()  # Balance is always last
-                    current_transaction['Balance'] = last_amount
-
-                    # Transaction amount is the second-to-last if multiple amounts exist
-                    transaction_amount = amounts[-2].replace('$', '').strip()
-                    if transaction_amount.startswith('-') or transaction_amount.startswith('('):
-                        current_transaction['Debit'] = transaction_amount.replace('(', '').replace(')', '')
+                amounts = [amt.strip() for amt in amounts]
+                if len(amounts) >= 2:
+                    current_transaction['Balance'] = amounts[-1]
+                    transaction_amount = amounts[-2]
+                    if '(' in line or '-' in line:
+                        current_transaction['Debit'] = transaction_amount
                     else:
                         current_transaction['Credit'] = transaction_amount
             else:
