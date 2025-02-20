@@ -27,12 +27,23 @@ def extract_transaction_data(text: str) -> List[Dict]:
 
     logging.debug(f"Processing {len(lines)} lines of text")
 
+    # Flag to indicate when we've reached the transaction section
+    in_transaction_section = False
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
         logging.debug(f"Processing line: {line}")
+
+        # Check if we've reached the transaction section
+        if "OPENING BALANCE" in line:
+            in_transaction_section = True
+            continue
+
+        if not in_transaction_section:
+            continue
 
         # Look for date at the start of line
         date_match = re.match(f"^{date_pattern}", line)
@@ -68,16 +79,17 @@ def extract_transaction_data(text: str) -> List[Dict]:
                 desc_end = remaining.find(amounts[0])
                 current_transaction['Description'] = remaining[:desc_end].strip()
 
-                # Process amounts
-                for amount in amounts:
-                    amount = amount.strip()
-                    # Remove brackets and handle negative amounts
-                    cleaned_amount = amount.replace('(', '-').replace(')', '').replace('$', '').strip()
+                # Process amounts based on position
+                if len(amounts) >= 2:  # We have both transaction amount and balance
+                    last_amount = amounts[-1].replace('$', '').strip()  # Balance is always last
+                    current_transaction['Balance'] = last_amount
 
-                    if amount.startswith('(') or amount.startswith('-'):
-                        current_transaction['Debit'] = cleaned_amount
+                    # Transaction amount is the second-to-last if multiple amounts exist
+                    transaction_amount = amounts[-2].replace('$', '').strip()
+                    if transaction_amount.startswith('-') or transaction_amount.startswith('('):
+                        current_transaction['Debit'] = transaction_amount.replace('(', '').replace(')', '')
                     else:
-                        current_transaction['Credit'] = cleaned_amount
+                        current_transaction['Credit'] = transaction_amount
             else:
                 # No amounts found, treat entire remaining text as description
                 current_transaction['Description'] = remaining
