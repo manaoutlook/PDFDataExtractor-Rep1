@@ -26,11 +26,11 @@ def index():
 def upload_file():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-    
+
     if not allowed_file(file.filename):
         return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
 
@@ -39,25 +39,27 @@ def upload_file():
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
-            
+
             output_format = request.form.get('format', 'excel')
+            logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
+
             output_file = convert_pdf(pdf_path, output_format)
-            
+
             if not output_file:
                 logging.error("Conversion returned no output file")
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
-                
+
             if not os.path.exists(output_file):
                 logging.error(f"Output file not found at {output_file}")
                 return jsonify({'error': 'Output file generation failed'}), 500
-                
+
             extension = 'xlsx' if output_format == 'excel' else 'csv'
             return send_file(
                 output_file,
                 as_attachment=True,
                 download_name=f'converted.{extension}'
             )
-    
+
     except Exception as e:
         logging.error(f"Error during conversion: {str(e)}")
         return jsonify({'error': 'An error occurred during conversion'}), 500
@@ -65,3 +67,7 @@ def upload_file():
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 16MB'}), 413
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
