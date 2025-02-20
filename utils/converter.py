@@ -118,6 +118,14 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
             logging.error("PDF file is empty")
             return None
 
+        # Check Java availability and configure headless mode
+        try:
+            import subprocess
+            subprocess.run(['java', '-Djava.awt.headless=true', '-version'], capture_output=True, check=True)
+        except Exception as e:
+            logging.error(f"Java not available or headless mode failed: {str(e)}")
+            return None
+
         # Extract tables from all pages with specific settings for ANZ statements
         try:
             tables = tabula.read_pdf(
@@ -128,7 +136,7 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
-                java_options=['-Dfile.encoding=UTF8']  # Add encoding option
+                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true']
             )
             logging.info(f"Successfully extracted {len(tables)} tables from PDF")
         except Exception as e:
@@ -140,19 +148,16 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
         for idx, table in enumerate(tables):
             logging.debug(f"Processing table {idx+1}, shape: {table.shape}")
             if len(table.columns) >= 4:  # Ensure table has enough columns
-                # Clean column names
                 table.columns = range(len(table.columns))
 
-                # Skip header rows and process each row
                 for _, row in table.iterrows():
-                    # Skip rows that don't look like transactions
                     if pd.isna(row[0]) or not str(row[0]).strip():
                         continue
 
                     date = parse_date(row[0])
                     if date:  # Only process rows with valid dates
                         transaction = {
-                            'Date': date.strftime('%d %b'),  # Changed format to dd MMM
+                            'Date': date.strftime('%d %b'),
                             'Transaction Details': str(row[1]).strip() if not pd.isna(row[1]) else '',
                             'Withdrawals ($)': clean_amount(row[2]),
                             'Deposits ($)': clean_amount(row[3]),
@@ -175,7 +180,6 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
 
         if output_format == 'excel':
             output_path = f"{temp_file.name}.xlsx"
-            # Apply formatting
             with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Transactions')
                 workbook = writer.book
