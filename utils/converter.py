@@ -37,18 +37,31 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     try:
         logging.info(f"Starting conversion of {pdf_path}")
 
-        # Extract tables from all pages with specific settings for ANZ statements
-        tables = tabula.read_pdf(
-            pdf_path,
-            pages='all',
-            multiple_tables=True,
-            guess=True,
-            lattice=False,
-            stream=True,
-            pandas_options={'header': None}
-        )
+        # Additional PDF validation
+        if not os.path.exists(pdf_path):
+            logging.error(f"PDF file not found at path: {pdf_path}")
+            return None
 
-        logging.info(f"Found {len(tables)} tables in the PDF")
+        if os.path.getsize(pdf_path) == 0:
+            logging.error("PDF file is empty")
+            return None
+
+        # Extract tables from all pages with specific settings for ANZ statements
+        try:
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=['-Dfile.encoding=UTF8']  # Add encoding option
+            )
+            logging.info(f"Successfully extracted {len(tables)} tables from PDF")
+        except Exception as e:
+            logging.error(f"Error during PDF table extraction: {str(e)}")
+            return None
 
         # Process and combine tables
         processed_data = []
