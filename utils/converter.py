@@ -41,6 +41,10 @@ def process_transaction_rows(table):
         # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
+        # Skip summary totals rows
+        if any(row_value.upper().startswith('TOTALS AT END OF') for row_value in row_values):
+            continue
+
         # Check if this is a continuation line (no valid date)
         date = parse_date(row_values[0])
 
