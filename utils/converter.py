@@ -46,6 +46,14 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file is empty")
             return None
 
+        # Check Java availability
+        try:
+            import subprocess
+            subprocess.run(['java', '-version'], capture_output=True, check=True)
+        except Exception as e:
+            logging.error(f"Java not available: {str(e)}")
+            return None
+
         # Extract tables from all pages with specific settings for ANZ statements
         try:
             tables = tabula.read_pdf(
@@ -56,24 +64,20 @@ def convert_pdf_to_data(pdf_path: str):
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
-                java_options=['-Dfile.encoding=UTF8']
+                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true']
             )
             logging.info(f"Successfully extracted {len(tables)} tables from PDF")
         except Exception as e:
             logging.error(f"Error during PDF table extraction: {str(e)}")
             return None
 
-        # Process and combine tables
         processed_data = []
         for idx, table in enumerate(tables):
             logging.debug(f"Processing table {idx+1}, shape: {table.shape}")
             if len(table.columns) >= 4:  # Ensure table has enough columns
-                # Clean column names
                 table.columns = range(len(table.columns))
 
-                # Skip header rows and process each row
                 for _, row in table.iterrows():
-                    # Skip rows that don't look like transactions
                     if pd.isna(row[0]) or not str(row[0]).strip():
                         continue
 

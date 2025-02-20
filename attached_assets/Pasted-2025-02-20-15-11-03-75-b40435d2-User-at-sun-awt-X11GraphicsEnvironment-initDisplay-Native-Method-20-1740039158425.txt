@@ -1,0 +1,92 @@
+2025-02-20 15:11:03.75
+b40435d2
+User
+at sun.awt.X11GraphicsEnvironment.initDisplay(Native Method)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at sun.awt.X11GraphicsEnvironment.access$200(X11GraphicsEnvironment.java:65)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at sun.awt.X11GraphicsEnvironment$1.run(X11GraphicsEnvironment.java:115)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.security.AccessController.doPrivileged(Native Method)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at sun.awt.X11GraphicsEnvironment.(X11GraphicsEnvironment.java:74)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.lang.Class.forName0(Native Method)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.lang.Class.forName(Class.java:264)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.awt.GraphicsEnvironment.createGE(GraphicsEnvironment.java:103)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment(GraphicsEnvironment.java:82)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at java.awt.image.BufferedImage.createGraphics(BufferedImage.java:1181)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at org.apache.pdfbox.rendering.PDFRenderer.renderImage(PDFRenderer.java:327)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at org.apache.pdfbox.rendering.PDFRenderer.renderImage(PDFRenderer.java:268)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at org.apache.pdfbox.rendering.PDFRenderer.renderImageWithDPI(PDFRenderer.java:254)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.Utils.pageConvertToImage(Utils.java:285)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.detectors.NurminenDetectionAlgorithm.detect(NurminenDetectionAlgorithm.java:101)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp$TableExtractor.extractTablesBasic(CommandLineApp.java:421)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp$TableExtractor.extractTables(CommandLineApp.java:408)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp.extractFile(CommandLineApp.java:180)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp.extractFileTables(CommandLineApp.java:124)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp.extractTables(CommandLineApp.java:106)
+2025-02-20 15:11:03.75
+b40435d2
+User
+at technology.tabula.CommandLineApp.main(CommandLineApp.java:76)
+2025-02-20 15:11:03.75
+b40435d2
+User
+ERROR:root:Error during PDF table extraction: Command '['java', '-Dfile.encoding=UTF8', '-jar', '/home/runner/workspace/.pythonlibs/lib/python3.11/site-packages/tabula/tabula-1.0.5-jar-with-dependencies.jar', '--pages', 'all', '--stream', '--guess', '--format', 'JSON', '/tmp/tmpyimhsqpt/739530465-26052024-ANZ-Bank-Statement.pdf']' returned non-zero exit status 1.
+
+Wrap
+
+Colors
