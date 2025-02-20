@@ -4,188 +4,106 @@ import tempfile
 import logging
 import re
 from datetime import datetime
-from typing import Optional, List, Dict
 import openpyxl
 
-def extract_transaction_data(text: str) -> List[Dict]:
-    """
-    Extract transaction data from text using regex patterns common in bank statements.
-    Specifically enhanced for ANZ bank statements.
-    """
-    # Initialize transaction storage
+def extract_transaction_data(text: str):
+    """Enhanced transaction extraction for ANZ statements"""
     transactions = []
 
-    # Enhanced date pattern for ANZ format
-    date_pattern = r'\d{2}(?:\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+)?(?:\d{2}|\d{4})?'
+    # Split into lines and remove empty ones
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
 
-    # Enhanced amount pattern for ANZ format
-    amount_pattern = r'-?(?:[\$\£\€]?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\(\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\))'
+    # More specific patterns for ANZ
+    date_pattern = r'(\d{2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*(?:\d{2}|\d{4}))'
+    amount_pattern = r'(?:\$\s*)((?:-|\()?[\d,]+\.?\d*\)?)'
 
-    # Split text into lines and process each line
-    lines = text.split('\n')
-    current_transaction = None
-
-    logging.debug(f"Processing {len(lines)} lines of text")
-
-    # Flag to indicate when we've reached the transaction section
     in_transaction_section = False
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        logging.debug(f"Processing line: {line}")
-
-        # Check if we've reached the transaction section
-        if "OPENING BALANCE" in line:
+    for i, line in enumerate(lines):
+        # Start capturing after "Opening Balance" or "Brought Forward"
+        if any(x in line for x in ["OPENING BALANCE", "BROUGHT FORWARD"]):
             in_transaction_section = True
             continue
 
         if not in_transaction_section:
             continue
 
-        # Look for date at the start of line
-        date_match = re.match(f"^{date_pattern}", line)
+        # Stop if we hit closing balance
+        if "CLOSING BALANCE" in line:
+            break
 
+        # Try to match a transaction line
+        date_match = re.search(date_pattern, line)
         if date_match:
-            # If we have a previous transaction, save it
-            if current_transaction:
-                transactions.append(current_transaction)
-                logging.debug(f"Saved transaction: {current_transaction}")
-
-            # Extract date
-            date_str = date_match.group().strip()
-            logging.debug(f"Found date: {date_str}")
-
-            # Start new transaction
-            current_transaction = {
-                'Date': date_str,
-                'Description': '',
-                'Debit': '',
-                'Credit': '',
-                'Balance': ''
-            }
-
-            # Remove date from line to process remaining parts
-            remaining = line[len(date_str):].strip()
-
-            # Find amounts in the remaining text
-            amounts = re.findall(amount_pattern, remaining)
-            
+            # Extract amounts - looking for 2-3 numbers that could be debit/credit and balance
+            amounts = re.findall(amount_pattern, line)
             if amounts:
-                logging.debug(f"Found amounts: {amounts}")
-                amounts = [amt.strip().replace('$', '').replace('(', '-').replace(')', '') for amt in amounts]
-                
-                # Get description (text before first amount)
-                desc_end = remaining.find(amounts[0])
-                if desc_end > 0:
-                    current_transaction['Description'] = remaining[:desc_end].strip()
-                
+                transaction = {
+                    'Date': date_match.group(1).strip(),
+                    'Description': '',
+                    'Debit': '',
+                    'Credit': '',
+                    'Balance': ''
+                }
+
+                # Get description - text between date and first amount
+                desc_start = date_match.end()
+                desc_end = line.find('$', desc_start)
+                if desc_end > desc_start:
+                    transaction['Description'] = line[desc_start:desc_end].strip()
+
+                # Process amounts
                 if len(amounts) >= 2:
-                    current_transaction['Balance'] = amounts[-1]
-                    transaction_amount = amounts[-2]
-                    
-                    # Determine if it's a debit or credit
-                    if transaction_amount.startswith('-') or '(' in line:
-                        current_transaction['Debit'] = transaction_amount.replace('-', '')
-                        current_transaction['Credit'] = ''
+                    # Last amount is usually balance
+                    balance = amounts[-1].replace(',', '')
+                    transaction['Balance'] = balance.replace('(', '-').replace(')', '')
+
+                    # Previous amount is transaction
+                    amount = amounts[-2].replace(',', '')
+                    if '(' in amount or '-' in amount:
+                        transaction['Debit'] = amount.replace('(', '').replace(')', '').replace('-', '')
                     else:
-                        current_transaction['Credit'] = transaction_amount
-                        current_transaction['Debit'] = ''
-            else:
-                # No amounts found, treat entire remaining text as description
-                current_transaction['Description'] = remaining
-                logging.debug(f"No amounts found in line, using as description: {remaining}")
+                        transaction['Credit'] = amount
 
-        elif current_transaction:
-            # If line doesn't start with date, it might be continuation of description
-            current_transaction['Description'] += ' ' + line
+                transactions.append(transaction)
 
-    # Add last transaction
-    if current_transaction:
-        transactions.append(current_transaction)
-        logging.debug(f"Saved final transaction: {current_transaction}")
-
-    logging.info(f"Extracted {len(transactions)} transactions")
     return transactions
 
-def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
-    """
-    Convert PDF bank statement to Excel or CSV format with proper table structure preservation
-    """
+def convert_pdf(pdf_path: str, output_format: str = 'excel'):
+    """Convert PDF bank statement to Excel/CSV"""
     try:
         logging.info(f"Starting conversion of {pdf_path}")
 
-        # Read PDF
         with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            all_transactions = []
+            reader = PyPDF2.PdfReader(file)
+            all_text = ""
 
-            # Process each page
-            for page_num in range(len(pdf_reader.pages)):
-                page = pdf_reader.pages[page_num]
-                text = page.extract_text()
-                logging.debug(f"Extracted text from page {page_num + 1}")
+            # Extract text from all pages
+            for page in reader.pages:
+                all_text += page.extract_text() + "\n"
 
-                # Extract transactions from the page
-                page_transactions = extract_transaction_data(text)
-                all_transactions.extend(page_transactions)
+            # Extract transactions
+            transactions = extract_transaction_data(all_text)
 
-                logging.debug(f"Extracted {len(page_transactions)} transactions from page {page_num + 1}")
+            if not transactions:
+                logging.error("No transactions found")
+                return None
 
-        if not all_transactions:
-            logging.error("No transactions found in the document")
-            return None
+            # Convert to DataFrame
+            df = pd.DataFrame(transactions)
 
-        # Convert to DataFrame
-        df = pd.DataFrame(all_transactions)
+            # Create output file
+            temp_file = tempfile.NamedTemporaryFile(delete=False)
 
-        # Create temporary file for output
-        temp_file = tempfile.NamedTemporaryFile(delete=False)
+            if output_format == 'excel':
+                output_path = f"{temp_file.name}.xlsx"
+                df.to_excel(output_path, index=False)
+            else:
+                output_path = f"{temp_file.name}.csv"
+                df.to_csv(output_path, index=False)
 
-        if output_format == 'excel':
-            output_path = f"{temp_file.name}.xlsx"
-            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Transactions')
-
-                # Format the workbook
-                workbook = writer.book
-                worksheet = writer.sheets['Transactions']
-
-                # Style for headers
-                header_style = openpyxl.styles.NamedStyle(name='header')
-                header_style.font = openpyxl.styles.Font(bold=True, size=12)
-                header_style.fill = openpyxl.styles.PatternFill(
-                    start_color="CCE5FF",
-                    end_color="CCE5FF",
-                    fill_type="solid"
-                )
-
-                # Apply header style
-                for col in range(1, len(df.columns) + 1):
-                    cell = worksheet.cell(row=1, column=col)
-                    cell.style = header_style
-
-                # Auto-adjust column widths
-                for column in worksheet.columns:
-                    max_length = 0
-                    column = [cell for cell in column]
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = (max_length + 2)
-                    worksheet.column_dimensions[column[0].column_letter].width = adjusted_width
-        else:
-            output_path = f"{temp_file.name}.csv"
-            df.to_csv(output_path, index=False)
-
-        logging.info(f"Successfully converted to {output_format}")
-        return output_path
+            return output_path
 
     except Exception as e:
-        logging.error(f"Conversion error: {str(e)}")
+        logging.error(f"Error in conversion: {str(e)}")
         return None
