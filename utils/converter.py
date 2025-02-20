@@ -67,7 +67,7 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                     date = parse_date(row[0])
                     if date:  # Only process rows with valid dates
                         transaction = {
-                            'Date': date.strftime('%d %b %y'),
+                            'Date': date.strftime('%d %b'),  # Changed format to dd MMM
                             'Transaction Details': str(row[1]).strip() if not pd.isna(row[1]) else '',
                             'Withdrawals ($)': clean_amount(row[2]),
                             'Deposits ($)': clean_amount(row[3]),
