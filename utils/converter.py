@@ -10,34 +10,46 @@ import openpyxl
 def extract_transaction_data(text: str) -> List[Dict]:
     """
     Extract transaction data from text using regex patterns common in bank statements.
+    Specifically enhanced for ANZ bank statements.
     """
     # Initialize transaction storage
     transactions = []
 
+    # Enhanced date pattern for ANZ format
+    date_pattern = r'\d{2}(?:\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+)?(?:\d{2}|\d{4})?'
+
+    # Enhanced amount pattern for ANZ format
+    amount_pattern = r'-?(?:[\$\£\€]?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\(\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\))'
+
     # Split text into lines and process each line
     lines = text.split('\n')
-    current_transaction = {}
+    current_transaction = None
+
+    logging.debug(f"Processing {len(lines)} lines of text")
 
     for line in lines:
         line = line.strip()
         if not line:
             continue
 
-        # Look for date patterns (DD MMM or DD/MM or YYYY-MM-DD)
-        date_pattern = r'\d{1,2}(?:\/\d{1,2}|\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)|[-/]\d{1,2}[-/]\d{2,4})'
+        logging.debug(f"Processing line: {line}")
 
-        # Look for amount patterns (currency amounts with optional decimals)
-        amount_pattern = r'(?:[\$\£\€]?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?)'
+        # Look for date at the start of line
+        date_match = re.match(f"^{date_pattern}", line)
 
-        # Check if line starts with a date
-        if re.match(date_pattern, line):
+        if date_match:
             # If we have a previous transaction, save it
             if current_transaction:
                 transactions.append(current_transaction)
+                logging.debug(f"Saved transaction: {current_transaction}")
+
+            # Extract date
+            date_str = date_match.group().strip()
+            logging.debug(f"Found date: {date_str}")
 
             # Start new transaction
             current_transaction = {
-                'Date': re.match(date_pattern, line).group(),
+                'Date': date_str,
                 'Description': '',
                 'Debit': '',
                 'Credit': '',
@@ -45,46 +57,46 @@ def extract_transaction_data(text: str) -> List[Dict]:
             }
 
             # Remove date from line to process remaining parts
-            remaining = line[len(current_transaction['Date']):].strip()
+            remaining = line[len(date_str):].strip()
 
             # Find amounts in the remaining text
             amounts = re.findall(amount_pattern, remaining)
 
-            # Process description (text between date and first amount)
-            desc_end = remaining.find(amounts[0]) if amounts else len(remaining)
-            current_transaction['Description'] = remaining[:desc_end].strip()
+            if amounts:
+                logging.debug(f"Found amounts: {amounts}")
+                # Process description (text between date and first amount)
+                desc_end = remaining.find(amounts[0])
+                current_transaction['Description'] = remaining[:desc_end].strip()
 
-            # Process amounts
-            for i, amount in enumerate(amounts):
-                amount = amount.strip()
-                if i == len(amounts) - 1:  # Last amount is typically balance
-                    current_transaction['Balance'] = amount
-                elif i == 0:  # First amount is typically debit or credit
-                    if '-' in amount or '(' in amount:  # Debit
-                        current_transaction['Debit'] = amount.replace('(', '').replace(')', '')
-                    else:  # Credit
-                        current_transaction['Credit'] = amount
-        else:
+                # Process amounts
+                for amount in amounts:
+                    amount = amount.strip()
+                    # Remove brackets and handle negative amounts
+                    cleaned_amount = amount.replace('(', '-').replace(')', '').replace('$', '').strip()
+
+                    if amount.startswith('(') or amount.startswith('-'):
+                        current_transaction['Debit'] = cleaned_amount
+                    else:
+                        current_transaction['Credit'] = cleaned_amount
+            else:
+                # No amounts found, treat entire remaining text as description
+                current_transaction['Description'] = remaining
+
+        elif current_transaction:
             # If line doesn't start with date, it might be continuation of description
-            if current_transaction:
-                current_transaction['Description'] += ' ' + line
+            current_transaction['Description'] += ' ' + line
 
     # Add last transaction
     if current_transaction:
         transactions.append(current_transaction)
+        logging.debug(f"Saved final transaction: {current_transaction}")
 
+    logging.info(f"Extracted {len(transactions)} transactions")
     return transactions
 
 def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
     """
     Convert PDF bank statement to Excel or CSV format with proper table structure preservation
-
-    Args:
-        pdf_path (str): Path to the PDF file
-        output_format (str): Either 'excel' or 'csv'
-
-    Returns:
-        str: Path to the converted file
     """
     try:
         logging.info(f"Starting conversion of {pdf_path}")
@@ -98,6 +110,7 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel') -> Optional[str]:
             for page_num in range(len(pdf_reader.pages)):
                 page = pdf_reader.pages[page_num]
                 text = page.extract_text()
+                logging.debug(f"Extracted text from page {page_num + 1}")
 
                 # Extract transactions from the page
                 page_transactions = extract_transaction_data(text)
