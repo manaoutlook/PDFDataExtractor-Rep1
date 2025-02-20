@@ -18,6 +18,20 @@ def clean_amount(amount_str):
         amount_str = '-' + amount_str.replace('(', '').replace(')', '')
     return amount_str
 
+def parse_date(date_str):
+    """Parse date string from ANZ statement format"""
+    try:
+        # Clean the date string
+        date_str = str(date_str).strip()
+        # If it's just day and month (e.g., "26 APR"), add current year
+        if len(date_str.split()) == 2:
+            current_year = datetime.now().year
+            date_str = f"{date_str} {str(current_year)[-2:]}"  # Add last 2 digits of current year
+        return datetime.strptime(date_str, '%d %b %y')
+    except (ValueError, TypeError) as e:
+        logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
+        return None
+
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     """Convert PDF bank statement to Excel/CSV using tabula-py"""
     try:
@@ -28,17 +42,13 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
             pdf_path,
             pages='all',
             multiple_tables=True,
-            guess=True,  # Changed to True for better table detection
-            lattice=False,  # Changed to False as ANZ statements don't use grid lines
+            guess=True,
+            lattice=False,
             stream=True,
             pandas_options={'header': None}
         )
 
         logging.info(f"Found {len(tables)} tables in the PDF")
-
-        if not tables:
-            logging.error("No tables found in the PDF")
-            return None
 
         # Process and combine tables
         processed_data = []
@@ -54,13 +64,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                     if pd.isna(row[0]) or not str(row[0]).strip():
                         continue
 
-                    try:
-                        # Try to parse the date to validate it's a transaction row
-                        date_str = str(row[0]).strip()
-                        datetime.strptime(date_str, '%d %b %y')
-
+                    date = parse_date(row[0])
+                    if date:  # Only process rows with valid dates
                         transaction = {
-                            'Date': date_str,
+                            'Date': date.strftime('%d %b %y'),
                             'Description': str(row[1]).strip() if not pd.isna(row[1]) else '',
                             'Debit': clean_amount(row[2]),
                             'Credit': clean_amount(row[3]),
@@ -68,9 +75,6 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                         }
                         processed_data.append(transaction)
                         logging.debug(f"Processed transaction: {transaction}")
-                    except (ValueError, TypeError) as e:
-                        logging.debug(f"Skipping row, not a valid transaction: {row[0]}, error: {str(e)}")
-                        continue
 
         if not processed_data:
             logging.error("No valid transactions found after processing")
