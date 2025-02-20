@@ -21,14 +21,32 @@ def clean_amount(amount_str):
 def parse_date(date_str):
     """Parse date string from ANZ statement format"""
     try:
-        # Clean the date string
-        date_str = str(date_str).strip()
+        # Clean and validate the date string
+        if not date_str or pd.isna(date_str):
+            return None
+
+        date_str = str(date_str).strip().upper()
+
+        # Skip header or footer text
+        if any(word in date_str.upper() for word in ['DATE', 'TOTALS', 'BALANCE']):
+            return None
+
         # If it's just day and month (e.g., "26 APR"), add current year
-        if len(date_str.split()) == 2:
-            current_year = datetime.now().year
-            date_str = f"{date_str} {str(current_year)[-2:]}"  # Add last 2 digits of current year
-        return datetime.strptime(date_str, '%d %b %y')
-    except (ValueError, TypeError) as e:
+        parts = date_str.split()
+        if len(parts) == 2:
+            try:
+                day = int(parts[0])
+                month = parts[1][:3]  # Take first 3 chars of month
+                if day > 31 or day < 1:
+                    return None
+                current_year = datetime.now().year
+                date_str = f"{day:02d} {month} {str(current_year)[-2:]}"
+                return datetime.strptime(date_str, '%d %b %y')
+            except ValueError:
+                return None
+
+        return None
+    except (ValueError, TypeError, AttributeError) as e:
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
 
@@ -37,19 +55,27 @@ def process_transaction_rows(table):
     processed_data = []
     current_transaction = None
 
-    for _, row in table.iterrows():
+    # Drop any completely empty rows
+    table = table.dropna(how='all')
+
+    # Reset the index after dropping rows
+    table = table.reset_index(drop=True)
+
+    for idx, row in table.iterrows():
         # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
-        # Skip summary totals rows
-        if any(row_value.upper().startswith('TOTALS AT END OF') for row_value in row_values):
+        # Skip empty rows or summary rows
+        if not any(row_values) or any(header in str(val).upper() for val in row_values 
+                                    for header in ['TOTALS', 'OPENING BALANCE', 'CLOSING BALANCE']):
             continue
 
-        # Check if this is a continuation line (no valid date)
+        # Parse the date
         date = parse_date(row_values[0])
 
+        # Check if this is a main transaction row (has a valid date)
         if date:
-            # If we have a pending transaction, add it
+            # If we have a pending transaction, add it to processed data
             if current_transaction:
                 processed_data.append(current_transaction)
 
@@ -61,19 +87,19 @@ def process_transaction_rows(table):
                 'Deposits ($)': clean_amount(row_values[3]),
                 'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
             }
-        else:
-            # This is a continuation line
-            if current_transaction and row_values[1].strip():
-                # Append the additional details to the current transaction
-                current_transaction['Transaction Details'] += f"\n{row_values[1].strip()}"
+        elif current_transaction and any(row_values[1:]):  # This is a continuation line
+            # Append additional transaction details
+            details = row_values[1].strip()
+            if details:
+                current_transaction['Transaction Details'] += f" {details}"
 
-                # If this line has monetary values, use them (they might be vertically centered)
-                if clean_amount(row_values[2]):
-                    current_transaction['Withdrawals ($)'] = clean_amount(row_values[2])
-                if clean_amount(row_values[3]):
-                    current_transaction['Deposits ($)'] = clean_amount(row_values[3])
-                if clean_amount(row_values[4]):
-                    current_transaction['Balance ($)'] = clean_amount(row_values[4])
+            # Update monetary values if present in continuation line
+            if clean_amount(row_values[2]):
+                current_transaction['Withdrawals ($)'] = clean_amount(row_values[2])
+            if clean_amount(row_values[3]):
+                current_transaction['Deposits ($)'] = clean_amount(row_values[3])
+            if len(row_values) > 4 and clean_amount(row_values[4]):
+                current_transaction['Balance ($)'] = clean_amount(row_values[4])
 
     # Add the last transaction if pending
     if current_transaction:
