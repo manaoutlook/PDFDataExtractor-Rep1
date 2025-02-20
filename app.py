@@ -43,15 +43,20 @@ def upload_file():
             output_format = request.form.get('format', 'excel')
             output_file = convert_pdf(pdf_path, output_format)
             
-            if output_file:
-                extension = 'xlsx' if output_format == 'excel' else 'csv'
-                return send_file(
-                    output_file,
-                    as_attachment=True,
-                    download_name=f'converted.{extension}'
-                )
-            else:
-                return jsonify({'error': 'Conversion failed'}), 500
+            if not output_file:
+                logging.error("Conversion returned no output file")
+                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
+                
+            if not os.path.exists(output_file):
+                logging.error(f"Output file not found at {output_file}")
+                return jsonify({'error': 'Output file generation failed'}), 500
+                
+            extension = 'xlsx' if output_format == 'excel' else 'csv'
+            return send_file(
+                output_file,
+                as_attachment=True,
+                download_name=f'converted.{extension}'
+            )
     
     except Exception as e:
         logging.error(f"Error during conversion: {str(e)}")

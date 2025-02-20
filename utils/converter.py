@@ -72,20 +72,31 @@ def extract_transaction_data(text: str) -> List[Dict]:
 
             # Find amounts in the remaining text
             amounts = re.findall(amount_pattern, remaining)
-
-            # Process amounts based on position
+            
             if amounts:
-                amounts = [amt.strip() for amt in amounts]
+                logging.debug(f"Found amounts: {amounts}")
+                amounts = [amt.strip().replace('$', '').replace('(', '-').replace(')', '') for amt in amounts]
+                
+                # Get description (text before first amount)
+                desc_end = remaining.find(amounts[0])
+                if desc_end > 0:
+                    current_transaction['Description'] = remaining[:desc_end].strip()
+                
                 if len(amounts) >= 2:
                     current_transaction['Balance'] = amounts[-1]
                     transaction_amount = amounts[-2]
-                    if '(' in line or '-' in line:
-                        current_transaction['Debit'] = transaction_amount
+                    
+                    # Determine if it's a debit or credit
+                    if transaction_amount.startswith('-') or '(' in line:
+                        current_transaction['Debit'] = transaction_amount.replace('-', '')
+                        current_transaction['Credit'] = ''
                     else:
                         current_transaction['Credit'] = transaction_amount
+                        current_transaction['Debit'] = ''
             else:
                 # No amounts found, treat entire remaining text as description
                 current_transaction['Description'] = remaining
+                logging.debug(f"No amounts found in line, using as description: {remaining}")
 
         elif current_transaction:
             # If line doesn't start with date, it might be continuation of description
