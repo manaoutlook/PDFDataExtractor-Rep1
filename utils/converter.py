@@ -104,13 +104,20 @@ def convert_pdf_to_data(pdf_path: str):
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
-                multiple_tables=True,
-                guess=True,
+                multiple_tables=False,  # Changed to False to avoid table fragmentation
+                guess=False,  # Disable automatic table detection
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
-                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true']
+                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true'],
+                area=[150, 50, 750, 590],  # Specify the area where transactions are located
+                columns=[80, 200, 350, 450, 550],  # Specify column positions
+                relative_area=True  # Use relative coordinates
             )
+            if isinstance(tables, list):
+                tables = [tables[0]] if tables else []
+            else:
+                tables = [tables]
             logging.info(f"Successfully extracted {len(tables)} tables from PDF")
         except Exception as e:
             logging.error(f"Error during PDF table extraction: {str(e)}")
