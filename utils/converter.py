@@ -68,10 +68,10 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                     if date:  # Only process rows with valid dates
                         transaction = {
                             'Date': date.strftime('%d %b %y'),
-                            'Description': str(row[1]).strip() if not pd.isna(row[1]) else '',
-                            'Debit': clean_amount(row[2]),
-                            'Credit': clean_amount(row[3]),
-                            'Balance': clean_amount(row[4]) if len(row) > 4 else ''
+                            'Transaction Details': str(row[1]).strip() if not pd.isna(row[1]) else '',
+                            'Withdrawals ($)': clean_amount(row[2]),
+                            'Deposits ($)': clean_amount(row[3]),
+                            'Balance ($)': clean_amount(row[4]) if len(row) > 4 else ''
                         }
                         processed_data.append(transaction)
                         logging.debug(f"Processed transaction: {transaction}")
