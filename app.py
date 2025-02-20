@@ -2,7 +2,7 @@ import os
 import logging
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-from utils.converter import convert_pdf
+from utils.converter import convert_pdf, convert_pdf_to_data
 import tempfile
 
 # Configure logging
@@ -22,8 +22,8 @@ def allowed_file(filename):
 def index():
     return render_template('index.html')
 
-@app.route('/upload', methods=['POST'])
-def upload_file():
+@app.route('/preview', methods=['POST'])
+def preview_data():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
 
@@ -40,13 +40,36 @@ def upload_file():
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
-            output_format = request.form.get('format', 'excel')
-            logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
+            logging.debug(f"Starting preview of {pdf_path}")
+            data = convert_pdf_to_data(pdf_path)
 
+            if not data:
+                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
+
+            return jsonify({'data': data})
+
+    except Exception as e:
+        logging.error(f"Error during preview: {str(e)}")
+        return jsonify({'error': 'An error occurred during preview'}), 500
+
+@app.route('/download', methods=['POST'])
+def download_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
+    file = request.files['file']
+    output_format = request.form.get('format', 'excel')
+
+    try:
+        # Create temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
+            file.save(pdf_path)
+
+            logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
             output_file = convert_pdf(pdf_path, output_format)
 
             if not output_file:
-                logging.error("Conversion returned no output file")
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
 
             if not os.path.exists(output_file):

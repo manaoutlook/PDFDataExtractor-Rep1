@@ -32,6 +32,74 @@ def parse_date(date_str):
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
 
+def convert_pdf_to_data(pdf_path: str):
+    """Extract data from PDF bank statement and return as list of dictionaries"""
+    try:
+        logging.info(f"Starting data extraction from {pdf_path}")
+
+        # Additional PDF validation
+        if not os.path.exists(pdf_path):
+            logging.error(f"PDF file not found at path: {pdf_path}")
+            return None
+
+        if os.path.getsize(pdf_path) == 0:
+            logging.error("PDF file is empty")
+            return None
+
+        # Extract tables from all pages with specific settings for ANZ statements
+        try:
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=['-Dfile.encoding=UTF8']
+            )
+            logging.info(f"Successfully extracted {len(tables)} tables from PDF")
+        except Exception as e:
+            logging.error(f"Error during PDF table extraction: {str(e)}")
+            return None
+
+        # Process and combine tables
+        processed_data = []
+        for idx, table in enumerate(tables):
+            logging.debug(f"Processing table {idx+1}, shape: {table.shape}")
+            if len(table.columns) >= 4:  # Ensure table has enough columns
+                # Clean column names
+                table.columns = range(len(table.columns))
+
+                # Skip header rows and process each row
+                for _, row in table.iterrows():
+                    # Skip rows that don't look like transactions
+                    if pd.isna(row[0]) or not str(row[0]).strip():
+                        continue
+
+                    date = parse_date(row[0])
+                    if date:  # Only process rows with valid dates
+                        transaction = {
+                            'Date': date.strftime('%d %b'),
+                            'Transaction Details': str(row[1]).strip() if not pd.isna(row[1]) else '',
+                            'Withdrawals ($)': clean_amount(row[2]),
+                            'Deposits ($)': clean_amount(row[3]),
+                            'Balance ($)': clean_amount(row[4]) if len(row) > 4 else ''
+                        }
+                        processed_data.append(transaction)
+                        logging.debug(f"Processed transaction: {transaction}")
+
+        if not processed_data:
+            logging.error("No valid transactions found after processing")
+            return None
+
+        logging.info(f"Successfully processed {len(processed_data)} transactions")
+        return processed_data
+
+    except Exception as e:
+        logging.error(f"Error in data extraction: {str(e)}")
+        return None
+
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     """Convert PDF bank statement to Excel/CSV using tabula-py"""
     try:

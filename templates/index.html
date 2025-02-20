@@ -11,7 +11,7 @@
 <body>
     <div class="container py-5">
         <div class="row justify-content-center">
-            <div class="col-md-8">
+            <div class="col-md-10">
                 <div class="card">
                     <div class="card-header">
                         <h2 class="text-center mb-0">PDF to Excel/CSV Converter</h2>
@@ -25,13 +25,13 @@
                                     <input type="file" id="fileInput" accept=".pdf" class="d-none">
                                 </div>
                             </div>
-                            
+
                             <div class="mb-3">
                                 <label class="form-label">Output Format:</label>
                                 <div class="btn-group w-100" role="group">
                                     <input type="radio" class="btn-check" name="format" id="excel" value="excel" checked>
                                     <label class="btn btn-outline-primary" for="excel">Excel</label>
-                                    
+
                                     <input type="radio" class="btn-check" name="format" id="csv" value="csv">
                                     <label class="btn btn-outline-primary" for="csv">CSV</label>
                                 </div>
@@ -51,8 +51,33 @@
 
                             <div id="alertArea"></div>
 
-                            <button type="submit" class="btn btn-primary w-100" id="convertBtn" disabled>
-                                Convert File
+                            <!-- Preview Button -->
+                            <button type="button" class="btn btn-secondary w-100 mb-3" id="previewBtn" disabled>
+                                Preview Data
+                            </button>
+
+                            <!-- Preview Table Section -->
+                            <div id="previewSection" class="mb-3 d-none">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Transaction Details</th>
+                                                <th>Withdrawals ($)</th>
+                                                <th>Deposits ($)</th>
+                                                <th>Balance ($)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="previewTableBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Download Button -->
+                            <button type="submit" class="btn btn-primary w-100" id="downloadBtn" disabled>
+                                Download File
                             </button>
                         </form>
                     </div>

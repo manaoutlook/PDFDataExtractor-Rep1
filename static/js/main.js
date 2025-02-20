@@ -2,11 +2,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadForm = document.getElementById('uploadForm');
-    const convertBtn = document.getElementById('convertBtn');
+    const previewBtn = document.getElementById('previewBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
     const fileInfo = document.getElementById('fileInfo');
     const fileName = document.getElementById('fileName');
     const progressBar = document.getElementById('progressBar');
     const alertArea = document.getElementById('alertArea');
+    const previewSection = document.getElementById('previewSection');
+    const previewTableBody = document.getElementById('previewTableBody');
 
     // Maximum file size in bytes (16MB)
     const MAX_FILE_SIZE = 16 * 1024 * 1024;
@@ -46,9 +49,62 @@ document.addEventListener('DOMContentLoaded', function() {
 
         fileInfo.classList.remove('d-none');
         fileName.textContent = file.name;
-        convertBtn.disabled = false;
-        showAlert('File ready for conversion!', 'success');
+        previewBtn.disabled = false;
+        downloadBtn.disabled = false;
+        showAlert('File ready for preview and conversion!', 'success');
     }
+
+    function populatePreviewTable(data) {
+        previewTableBody.innerHTML = '';
+        data.forEach(transaction => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${transaction.Date}</td>
+                <td>${transaction['Transaction Details']}</td>
+                <td>${transaction['Withdrawals ($)']}</td>
+                <td>${transaction['Deposits ($)']}</td>
+                <td>${transaction['Balance ($)']}</td>
+            `;
+            previewTableBody.appendChild(row);
+        });
+        previewSection.classList.remove('d-none');
+    }
+
+    // Preview functionality
+    previewBtn.addEventListener('click', async () => {
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        previewBtn.disabled = true;
+        progressBar.classList.remove('d-none');
+        updateProgress(50);
+
+        try {
+            const response = await fetch('/preview', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Preview failed');
+            }
+
+            const data = await response.json();
+            populatePreviewTable(data.data);
+            updateProgress(100);
+            showAlert('Data preview loaded successfully!', 'success');
+        } catch (error) {
+            showAlert(error.message);
+            previewSection.classList.add('d-none');
+        } finally {
+            previewBtn.disabled = false;
+            setTimeout(() => {
+                progressBar.classList.add('d-none');
+                updateProgress(0);
+            }, 1000);
+        }
+    });
 
     // Drag and drop handlers
     dropZone.addEventListener('dragover', (e) => {
@@ -79,20 +135,20 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Form submission
+    // Form submission (download)
     uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
         formData.append('format', document.querySelector('input[name="format"]:checked').value);
 
-        convertBtn.disabled = true;
+        downloadBtn.disabled = true;
         progressBar.classList.remove('d-none');
         updateProgress(50);
 
         try {
-            const response = await fetch('/upload', {
+            const response = await fetch('/download', {
                 method: 'POST',
                 body: formData
             });
@@ -103,7 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             updateProgress(100);
-            
+
             // Handle file download
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
@@ -115,12 +171,12 @@ document.addEventListener('DOMContentLoaded', function() {
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(downloadUrl);
-            
+
             showAlert('Conversion successful!', 'success');
         } catch (error) {
             showAlert(error.message);
         } finally {
-            convertBtn.disabled = false;
+            downloadBtn.disabled = false;
             setTimeout(() => {
                 progressBar.classList.add('d-none');
                 updateProgress(0);
