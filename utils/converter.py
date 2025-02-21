@@ -76,7 +76,7 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Skip empty rows or summary rows (but not opening balance)
+        # Skip empty rows or only summary rows
         if not any(row_values) or any(header in str(val).upper() 
                                     for val in row_values 
                                     for header in ['TOTALS', 'CLOSING BALANCE']):
