@@ -83,36 +83,42 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Check if this is a new transaction or continuation
+        # Parse date and check for monetary values
         date = parse_date(row_values[0])
-        has_amount = any(clean_amount(val) for val in row_values[2:5] if val)
+        withdrawal = clean_amount(row_values[2])
+        deposit = clean_amount(row_values[3])
+        balance = clean_amount(row_values[4]) if len(row_values) > 4 else ''
 
-        if date or has_amount:
-            # Add previous transaction if exists
+        # Determine if this row has monetary values
+        has_monetary_values = bool(withdrawal or deposit or balance)
+
+        # Start a new transaction if we have a date or monetary values
+        if date or (has_monetary_values and row_values[1].strip()):
+            # Save the previous transaction if it exists
             if current_transaction:
                 processed_data.append(current_transaction)
 
             # Create new transaction
             current_transaction = {
                 'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
-                'Transaction Details': row_values[1],
-                'Withdrawals ($)': clean_amount(row_values[2]),
-                'Deposits ($)': clean_amount(row_values[3]),
-                'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
+                'Transaction Details': row_values[1].strip(),
+                'Withdrawals ($)': withdrawal,
+                'Deposits ($)': deposit,
+                'Balance ($)': balance
             }
         elif current_transaction and row_values[1].strip():
-            # Add continuation line details
+            # This is a continuation line
             current_transaction['Transaction Details'] += f" {row_values[1].strip()}"
 
-            # Update amounts if present
-            if clean_amount(row_values[2]):
-                current_transaction['Withdrawals ($)'] = clean_amount(row_values[2])
-            if clean_amount(row_values[3]):
-                current_transaction['Deposits ($)'] = clean_amount(row_values[3])
-            if len(row_values) > 4 and clean_amount(row_values[4]):
-                current_transaction['Balance ($)'] = clean_amount(row_values[4])
+            # Update monetary values if present in continuation line
+            if withdrawal:
+                current_transaction['Withdrawals ($)'] = withdrawal
+            if deposit:
+                current_transaction['Deposits ($)'] = deposit
+            if balance:
+                current_transaction['Balance ($)'] = balance
 
-    # Add last transaction if exists
+    # Add the last transaction if it exists
     if current_transaction:
         processed_data.append(current_transaction)
 
