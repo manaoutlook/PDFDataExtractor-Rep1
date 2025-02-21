@@ -64,8 +64,12 @@ def process_transaction_rows(table):
         logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
-        if any(header in str(row_values[1]).upper() for header in ['TRANSACTION DETAILS -WITHDRAWALS']):
+        if any(header in str(row_values[1]).upper() for header in ['TRANSACTION DETAILS -WITHDRAWALS', 'TRANSACTION DETAILS', '-WITHDRAWALS', '-DEPOSITS', '-BALANCE']):
             logging.debug(f"Skipping header row: {row_values}")
+            continue
+
+        # Skip totals row
+        if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
             continue
 
         # Handle opening balance
@@ -77,10 +81,6 @@ def process_transaction_rows(table):
                 'Deposits ($)': '',
                 'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
             })
-            continue
-
-        # Skip totals row
-        if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
             continue
 
         # Check if this is a new transaction or continuation
