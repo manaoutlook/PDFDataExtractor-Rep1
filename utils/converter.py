@@ -65,7 +65,7 @@ def process_transaction_rows(table):
         # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
-        logging.debug(f"Processing row: {row_values}")
+        logging.debug(f"Processing row {idx}: {row_values}")
 
         # Handle opening balance specially
         if 'OPENING BALANCE' in str(row_values[1]).upper():
@@ -76,20 +76,24 @@ def process_transaction_rows(table):
                 'Deposits ($)': '',
                 'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
             })
+            logging.debug("Added opening balance row")
             continue
 
         # Skip totals rows only
         if any(word in str(row_values[1]).upper() for word in ['TOTALS AT END OF PERIOD']):
+            logging.debug(f"Skipping totals row: {row_values}")
             continue
 
         # Parse the date
         date = parse_date(row_values[0])
+        logging.debug(f"Parsed date from {row_values[0]}: {date}")
 
         # Check if this is a main transaction row (has a valid date)
         if date:
             # If we have a pending transaction, add it to processed data
             if current_transaction:
                 processed_data.append(current_transaction)
+                logging.debug(f"Added pending transaction: {current_transaction}")
 
             # Start new transaction
             current_transaction = {
@@ -99,7 +103,7 @@ def process_transaction_rows(table):
                 'Deposits ($)': clean_amount(row_values[3]),
                 'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
             }
-            logging.debug(f"Added new transaction: {current_transaction}")
+            logging.debug(f"Created new transaction: {current_transaction}")
         elif current_transaction and any(row_values[1:]):  # This is a continuation line
             # Append additional transaction details
             details = row_values[1].strip()
@@ -114,10 +118,14 @@ def process_transaction_rows(table):
             if len(row_values) > 4 and clean_amount(row_values[4]):
                 current_transaction['Balance ($)'] = clean_amount(row_values[4])
 
+            logging.debug(f"Updated transaction with continuation line: {current_transaction}")
+
     # Add the last transaction if pending
     if current_transaction:
         processed_data.append(current_transaction)
+        logging.debug(f"Added final pending transaction: {current_transaction}")
 
+    logging.debug(f"Total transactions processed: {len(processed_data)}")
     return processed_data
 
 def convert_pdf_to_data(pdf_path: str):
@@ -138,19 +146,17 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error(f"Java not available: {str(e)}")
             return None
 
-        # Extract tables with specific settings for ANZ statements
+        # Extract tables
         try:
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
                 multiple_tables=True,
-                guess=False,  # Disable automatic table detection
+                guess=True,
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
-                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true'],
-                area=[150, 50, 750, 590],  # Specify the area where transactions are located
-                columns=[80, 200, 350, 450, 550]  # Specify column positions
+                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true']
             )
             if not isinstance(tables, list):
                 tables = [tables]
@@ -164,6 +170,8 @@ def convert_pdf_to_data(pdf_path: str):
         # Process each table
         for idx, table in enumerate(tables):
             logging.debug(f"Processing table {idx+1}, shape: {table.shape}")
+            logging.debug(f"Table contents:\n{table}")
+
             if len(table.columns) >= 4:  # Ensure table has enough columns
                 table.columns = range(len(table.columns))
 
