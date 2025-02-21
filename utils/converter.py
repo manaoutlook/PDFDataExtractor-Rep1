@@ -144,11 +144,13 @@ def convert_pdf_to_data(pdf_path: str):
                 pdf_path,
                 pages='all',
                 multiple_tables=True,
-                guess=True,
+                guess=False,  # Disable automatic table detection
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
-                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true']
+                java_options=['-Dfile.encoding=UTF8', '-Djava.awt.headless=true'],
+                area=[150, 50, 750, 590],  # Specify the area where transactions are located
+                columns=[80, 200, 350, 450, 550]  # Specify column positions
             )
             if not isinstance(tables, list):
                 tables = [tables]
