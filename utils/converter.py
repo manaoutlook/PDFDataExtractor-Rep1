@@ -65,9 +65,21 @@ def process_transaction_rows(table):
         # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
-        # Skip empty rows or summary rows
-        if not any(row_values) or any(header in str(val).upper() for val in row_values 
-                                    for header in ['TOTALS', 'OPENING BALANCE', 'CLOSING BALANCE']):
+        # Handle opening balance specially
+        if 'OPENING BALANCE' in str(row_values[1]).upper():
+            processed_data.append({
+                'Date': parse_date(row_values[0]).strftime('%d %b') if parse_date(row_values[0]) else row_values[0],
+                'Transaction Details': row_values[1],
+                'Withdrawals ($)': '',
+                'Deposits ($)': '',
+                'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
+            })
+            continue
+
+        # Skip empty rows or summary rows (but not opening balance)
+        if not any(row_values) or any(header in str(val).upper() 
+                                    for val in row_values 
+                                    for header in ['TOTALS', 'CLOSING BALANCE']):
             continue
 
         # Parse the date
