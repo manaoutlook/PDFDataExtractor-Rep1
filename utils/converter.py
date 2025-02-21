@@ -146,6 +146,12 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
+        # Configure Java options for headless mode
+        java_options = [
+            '-Djava.awt.headless=true',
+            '-Dfile.encoding=UTF8'
+        ]
+
         # Extract tables from PDF
         tables = tabula.read_pdf(
             pdf_path,
@@ -154,7 +160,8 @@ def convert_pdf_to_data(pdf_path: str):
             guess=True,
             lattice=False,
             stream=True,
-            pandas_options={'header': None}
+            pandas_options={'header': None},
+            java_options=java_options
         )
 
         if not tables:
