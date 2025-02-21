@@ -63,6 +63,11 @@ def process_transaction_rows(table):
 
         logging.debug(f"Processing row {idx}: {row_values}")
 
+        # Skip header rows
+        if any(header in str(row_values[1]).upper() for header in ['TRANSACTION DETAILS -WITHDRAWALS']):
+            logging.debug(f"Skipping header row: {row_values}")
+            continue
+
         # Handle opening balance
         if 'OPENING BALANCE' in str(row_values[1]).upper():
             processed_data.append({
