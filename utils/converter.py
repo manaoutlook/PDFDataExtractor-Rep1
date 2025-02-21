@@ -68,10 +68,6 @@ def process_transaction_rows(table):
             logging.debug(f"Skipping header row: {row_values}")
             continue
 
-        # Skip totals row
-        if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
-            continue
-
         # Handle opening balance
         if 'OPENING BALANCE' in str(row_values[1]).upper():
             processed_data.append({
@@ -83,22 +79,21 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Parse date and check for monetary values
+        # Skip totals row
+        if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
+            continue
+
+        # Parse date and monetary values
         date = parse_date(row_values[0])
         withdrawal = clean_amount(row_values[2])
         deposit = clean_amount(row_values[3])
         balance = clean_amount(row_values[4]) if len(row_values) > 4 else ''
 
-        # Determine if this row has monetary values
-        has_monetary_values = bool(withdrawal or deposit or balance)
-
-        # Start a new transaction if we have a date or monetary values
-        if date or (has_monetary_values and row_values[1].strip()):
-            # Save the previous transaction if it exists
+        # Start a new transaction if we have a date or it's a new transaction line
+        if date or (row_values[1].strip() and not current_transaction):
             if current_transaction:
                 processed_data.append(current_transaction)
 
-            # Create new transaction
             current_transaction = {
                 'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
                 'Transaction Details': row_values[1].strip(),
@@ -106,17 +101,35 @@ def process_transaction_rows(table):
                 'Deposits ($)': deposit,
                 'Balance ($)': balance
             }
-        elif current_transaction and row_values[1].strip():
-            # This is a continuation line
-            current_transaction['Transaction Details'] += f" {row_values[1].strip()}"
+        elif current_transaction:
+            # Handle continuation lines
+            details = row_values[1].strip()
+            if details:
+                if current_transaction['Transaction Details']:
+                    current_transaction['Transaction Details'] += f" {details}"
+                else:
+                    current_transaction['Transaction Details'] = details
 
-            # Update monetary values if present in continuation line
-            if withdrawal:
+            # Update monetary values if present
+            if withdrawal and not current_transaction['Withdrawals ($)']:
                 current_transaction['Withdrawals ($)'] = withdrawal
-            if deposit:
+            if deposit and not current_transaction['Deposits ($)']:
                 current_transaction['Deposits ($)'] = deposit
             if balance:
                 current_transaction['Balance ($)'] = balance
+
+            # If we have monetary values but no previous transaction details,
+            # this might be a new transaction
+            if (withdrawal or deposit) and not current_transaction['Transaction Details']:
+                if current_transaction:
+                    processed_data.append(current_transaction)
+                current_transaction = {
+                    'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
+                    'Transaction Details': details,
+                    'Withdrawals ($)': withdrawal,
+                    'Deposits ($)': deposit,
+                    'Balance ($)': balance
+                }
 
     # Add the last transaction if it exists
     if current_transaction:
