@@ -65,6 +65,8 @@ def process_transaction_rows(table):
         # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
+        logging.debug(f"Processing row: {row_values}")
+
         # Handle opening balance specially
         if 'OPENING BALANCE' in str(row_values[1]).upper():
             processed_data.append({
@@ -76,10 +78,8 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Skip empty rows or only summary rows
-        if not any(row_values) or any(header in str(val).upper() 
-                                    for val in row_values 
-                                    for header in ['TOTALS', 'CLOSING BALANCE']):
+        # Skip totals rows only
+        if any(word in str(row_values[1]).upper() for word in ['TOTALS AT END OF PERIOD']):
             continue
 
         # Parse the date
@@ -99,6 +99,7 @@ def process_transaction_rows(table):
                 'Deposits ($)': clean_amount(row_values[3]),
                 'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
             }
+            logging.debug(f"Added new transaction: {current_transaction}")
         elif current_transaction and any(row_values[1:]):  # This is a continuation line
             # Append additional transaction details
             details = row_values[1].strip()
@@ -142,8 +143,8 @@ def convert_pdf_to_data(pdf_path: str):
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
-                multiple_tables=True,  # Changed back to True to ensure we capture all tables
-                guess=True,  # Enable automatic table detection
+                multiple_tables=True,
+                guess=True,
                 lattice=False,
                 stream=True,
                 pandas_options={'header': None},
