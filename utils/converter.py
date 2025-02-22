@@ -109,9 +109,9 @@ def process_transaction_rows(table, page_idx):
                 current_transaction['Transaction Details'] += f"\n{row_values[1].strip()}"
 
             # Update monetary values if present in continuation line
-            if withdrawal and not current_transaction['Withdrawals ($)']:
+            if withdrawal:
                 current_transaction['Withdrawals ($)'] = withdrawal
-            if deposit and not current_transaction['Deposits ($)']:
+            if deposit:
                 current_transaction['Deposits ($)'] = deposit
             if balance:
                 current_transaction['Balance ($)'] = balance
