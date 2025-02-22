@@ -130,28 +130,36 @@ def process_transaction_rows(table):
                     current_transaction['Balance ($)'] = balance
                 continue
 
-            # Start a new transaction if we have a date or specific transaction markers
-            if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                # Combine the details if they're split across lines
-                if 'WAGES' in details:
-                    current_transaction['Transaction Details'] = details
-                else:
-                    current_transaction['Transaction Details'] += f" {details}"
-
-                if balance:
-                    current_transaction['Balance ($)'] = balance
+            # Handle continuation of WAGES transactions
+            if current_transaction and 'WAGES' in details and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
+                current_transaction['Transaction Details'] = f"ANZ INTERNET BANKING TRANSFER {details}"
                 if deposit:
                     current_transaction['Deposits ($)'] = deposit
-            else:
-                # Create a unique key for the transaction
+                if balance:
+                    current_transaction['Balance ($)'] = balance
+            # Start a new transaction if we have a date
+            elif date:
                 if current_transaction:
                     transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
                     if transaction_key not in seen_transactions:
                         seen_transactions.add(transaction_key)
                         processed_data.append(current_transaction)
-
-                # Only start new if it's not a continuation
-                if not (current_transaction and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
+                current_transaction = {
+                    'Date': date.strftime('%d %b'),
+                    'Transaction Details': details.strip(),
+                    'Withdrawals ($)': withdrawal,
+                    'Deposits ($)': deposit,
+                    'Balance ($)': balance
+                }
+            # Append details to current transaction
+            elif current_transaction and details:
+                current_transaction['Transaction Details'] += f" {details}"
+                if withdrawal:
+                    current_transaction['Withdrawals ($)'] = withdrawal
+                if deposit:
+                    current_transaction['Deposits ($)'] = deposit
+                if balance:
+                    current_transaction['Balance ($)'] = balance
                     current_transaction = {
                         'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
                         'Transaction Details': details,
