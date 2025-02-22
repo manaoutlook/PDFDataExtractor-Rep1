@@ -52,10 +52,19 @@ def process_transaction_rows(table):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     current_transaction = None
-
-    # Clean the table
+    
+    # Clean the table and skip if it's a header-only table
     table = table.dropna(how='all')
     table = table.reset_index(drop=True)
+    
+    # Skip if table contains only headers
+    if len(table) <= 1:
+        return []
+        
+    # Check if this table is a continuation from previous page
+    first_row = table.iloc[0]
+    if isinstance(first_row[0], str) and not first_row[0].strip():
+        return []  # Skip duplicate continuation tables
 
     for idx, row in table.iterrows():
         # Convert row values to strings and clean
@@ -79,8 +88,8 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Skip totals row but process transactions before it
-        if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
+        # Handle totals rows but continue processing
+        if any(total in str(row_values[1]).upper() for total in ['TOTALS AT END OF PERIOD', 'TOTALS AT END OF PAGE']):
             if current_transaction:
                 processed_data.append(current_transaction)
                 current_transaction = None
