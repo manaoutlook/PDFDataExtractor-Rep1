@@ -102,13 +102,16 @@ def process_transaction_rows(table, page_idx):
                 '_page_idx': page_idx,
                 '_row_idx': idx
             }
-        elif current_transaction and row_values[1].strip():
-            # Append continuation lines
-            current_transaction['Transaction Details'] += f" {row_values[1].strip()}"
-            # Update monetary values if present
-            if withdrawal:
+        elif current_transaction and (row_values[1].strip() or withdrawal or deposit or balance):
+            # Handle continuation lines
+            if row_values[1].strip():
+                # If there's a description, append it
+                current_transaction['Transaction Details'] += f"\n{row_values[1].strip()}"
+
+            # Update monetary values if present in continuation line
+            if withdrawal and not current_transaction['Withdrawals ($)']:
                 current_transaction['Withdrawals ($)'] = withdrawal
-            if deposit:
+            if deposit and not current_transaction['Deposits ($)']:
                 current_transaction['Deposits ($)'] = deposit
             if balance:
                 current_transaction['Balance ($)'] = balance
