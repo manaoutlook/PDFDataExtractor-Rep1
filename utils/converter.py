@@ -16,10 +16,15 @@ def clean_amount(amount_str):
     # Handle brackets for negative numbers
     if '(' in amount_str and ')' in amount_str:
         amount_str = '-' + amount_str.replace('(', '').replace(')', '')
-    return amount_str
+    try:
+        # Try to convert to float to validate
+        float(amount_str)
+        return amount_str
+    except ValueError:
+        return ''
 
 def parse_date(date_str):
-    """Parse date string from ANZ statement format"""
+    """Parse date string from bank statement format"""
     try:
         if not date_str or pd.isna(date_str):
             return None
@@ -27,7 +32,7 @@ def parse_date(date_str):
         date_str = str(date_str).strip().upper()
 
         # Skip rows that aren't dates
-        if any(word in date_str for word in ['TOTALS', 'BALANCE']):
+        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
             return None
 
         # Handle day and month format (e.g., "26 APR")
@@ -36,11 +41,13 @@ def parse_date(date_str):
             try:
                 day = int(parts[0])
                 month = parts[1][:3]  # Take first 3 chars of month
-                if month == 'APR' and day == 31:  # Handle special case
-                    day = 30
                 current_year = datetime.now().year
+                # Handle special case for dates like "31 APR"
+                if month == 'APR' and day == 31:
+                    day = 30
                 date_str = f"{day:02d} {month} {current_year}"
-                return datetime.strptime(date_str, '%d %b %Y')
+                parsed_date = datetime.strptime(date_str, '%d %b %Y')
+                return parsed_date
             except (ValueError, IndexError) as e:
                 logging.debug(f"Date parse error: {e} for {date_str}")
                 return None
@@ -50,53 +57,27 @@ def parse_date(date_str):
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
 
-def process_transaction_rows(table):
+def process_transaction_rows(table, page_idx):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     current_transaction = None
 
-    # Clean the table and skip if it's a header-only table
-    table = table.dropna(how='all')
-    table = table.reset_index(drop=True)
+    # Clean the table
+    table = table.dropna(how='all').reset_index(drop=True)
 
-    # Skip if table contains only headers
+    # Skip if table is empty or contains only headers
     if len(table) <= 1:
         return []
-
-    # Check for header rows and skip them
-    if any(col.upper().strip() in ['TRANSACTION DETAILS', 'WITHDRAWALS ($)', 'DEPOSITS ($)', 'BALANCE ($)']
-           for col in table.iloc[0] if isinstance(col, str)):
-        table = table.iloc[1:]
-        table = table.reset_index(drop=True)
 
     for idx, row in table.iterrows():
         # Convert row values to strings and clean
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
-        logging.debug(f"Processing row {idx}: {row_values}")
+        logging.debug(f"Processing row {idx} on page {page_idx}: {row_values}")
 
-        # Skip header rows
-        if any(header in str(row_values[1]).upper() for header in
-               ['TRANSACTION DETAILS -WITHDRAWALS', 'TRANSACTION DETAILS', '-WITHDRAWALS', '-DEPOSITS', '-BALANCE']):
-            logging.debug(f"Skipping header row: {row_values}")
-            continue
-
-        # Handle opening balance
-        if 'OPENING BALANCE' in str(row_values[1]).upper():
-            processed_data.append({
-                'Date': row_values[0],
-                'Transaction Details': 'OPENING BALANCE',
-                'Withdrawals ($)': '',
-                'Deposits ($)': '',
-                'Balance ($)': clean_amount(row_values[4]) if len(row_values) > 4 else ''
-            })
-            continue
-
-        # Handle totals rows but continue processing
-        if any(total in str(row_values[1]).upper() for total in ['TOTALS AT END OF PERIOD', 'TOTALS AT END OF PAGE']):
-            if current_transaction:
-                processed_data.append(current_transaction)
-                current_transaction = None
+        # Skip header-like rows
+        if any(header in str(row_values[1]).upper() for header in 
+               ['TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE', 'OPENING']):
             continue
 
         # Parse date and monetary values
@@ -105,7 +86,7 @@ def process_transaction_rows(table):
         deposit = clean_amount(row_values[3])
         balance = clean_amount(row_values[4]) if len(row_values) > 4 else ''
 
-        # Start a new transaction if we have a date
+        # Start new transaction if we have a date
         if date:
             if current_transaction:
                 processed_data.append(current_transaction)
@@ -115,11 +96,14 @@ def process_transaction_rows(table):
                 'Transaction Details': row_values[1].strip(),
                 'Withdrawals ($)': withdrawal,
                 'Deposits ($)': deposit,
-                'Balance ($)': balance
+                'Balance ($)': balance,
+                '_page_idx': page_idx,
+                '_row_idx': idx
             }
         elif current_transaction and row_values[1].strip():
-            # Handle continuation lines
+            # Append continuation lines
             current_transaction['Transaction Details'] += f" {row_values[1].strip()}"
+            # Update monetary values if present
             if withdrawal:
                 current_transaction['Withdrawals ($)'] = withdrawal
             if deposit:
@@ -127,7 +111,7 @@ def process_transaction_rows(table):
             if balance:
                 current_transaction['Balance ($)'] = balance
 
-    # Add the last transaction if it exists
+    # Add the last transaction
     if current_transaction:
         processed_data.append(current_transaction)
 
@@ -166,18 +150,17 @@ def convert_pdf_to_data(pdf_path: str):
 
         all_transactions = []
         seen_transactions = set()
-        current_year = datetime.now().year
 
         # Process each table
         for page_idx, table in enumerate(tables):
             logging.debug(f"Processing table {page_idx+1}, shape: {table.shape}")
-            if len(table.columns) >= 4:
+            if len(table.columns) >= 4:  # Ensure table has required columns
                 table.columns = range(len(table.columns))
-                transactions = process_transaction_rows(table)
+                transactions = process_transaction_rows(table, page_idx)
 
-                # Add unique transactions with page information
+                # Add unique transactions
                 for trans in transactions:
-                    # Create a more comprehensive transaction key
+                    # Create a comprehensive transaction key
                     trans_key = (
                         trans['Date'],
                         trans['Transaction Details'],
@@ -188,8 +171,6 @@ def convert_pdf_to_data(pdf_path: str):
 
                     if trans_key not in seen_transactions:
                         seen_transactions.add(trans_key)
-                        # Add page information to help with sorting
-                        trans['_page_idx'] = page_idx
                         all_transactions.append(trans)
                     else:
                         logging.debug(f"Skipping duplicate transaction: {trans}")
@@ -198,18 +179,20 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("No transactions extracted from tables")
             return None
 
-        # Sort transactions by page first, then by date and balance
-        all_transactions.sort(key=lambda x: (
-            x['_page_idx'],
-            datetime.strptime(f"{x['Date']} {current_year}", '%d %b %Y') if x['Date'] else datetime.max,
-            float(x['Balance ($)'].replace(',', '')) if x['Balance ($)'] else 0
-        ))
+        # Sort transactions by page and row index
+        all_transactions.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
 
-        # Remove the temporary _page_idx field
+        # Remove temporary sorting fields
         for trans in all_transactions:
             trans.pop('_page_idx', None)
+            trans.pop('_row_idx', None)
 
         logging.info(f"Successfully extracted {len(all_transactions)} unique transactions")
+
+        # Log all transactions for verification
+        for idx, trans in enumerate(all_transactions):
+            logging.debug(f"Transaction {idx+1}: {trans}")
+
         return all_transactions
 
     except Exception as e:
@@ -217,7 +200,7 @@ def convert_pdf_to_data(pdf_path: str):
         return None
 
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
-    """Convert PDF bank statement to Excel/CSV using tabula-py"""
+    """Convert PDF bank statement to Excel/CSV"""
     try:
         # Extract data using the improved processing logic
         processed_data = convert_pdf_to_data(pdf_path)
