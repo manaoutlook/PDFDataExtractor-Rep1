@@ -37,26 +37,158 @@ def parse_date(date_str):
         if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
             return None
 
-        # Handle day and month format (e.g., "26 APR")
+        # Handle various date formats
         parts = date_str.split()
-        if len(parts) == 2:
+        if len(parts) == 2:  # e.g., "26 APR"
             try:
                 day = int(parts[0])
                 month = parts[1][:3]  # Take first 3 chars of month
                 current_year = datetime.now().year
-                # Handle special case for dates like "31 APR"
-                if month == 'APR' and day == 31:
-                    day = 30
                 date_str = f"{day:02d} {month} {current_year}"
-                parsed_date = datetime.strptime(date_str, '%d %b %Y')
-                return parsed_date
-            except (ValueError, IndexError) as e:
-                logging.debug(f"Date parse error: {e} for {date_str}")
+                return datetime.strptime(date_str, '%d %b %Y')
+            except (ValueError, IndexError):
                 return None
 
         return None
     except Exception as e:
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
+        return None
+
+def extract_text_based_data(pdf_path):
+    """Extract data from text-based PDF using tabula"""
+    try:
+        tables = tabula.read_pdf(
+            pdf_path,
+            pages='all',
+            multiple_tables=True,
+            guess=True,
+            lattice=False,
+            stream=True,
+            pandas_options={'header': None},
+            java_options=['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+        )
+
+        if not tables:
+            logging.error("No tables found in text-based PDF")
+            return None
+
+        all_transactions = []
+        seen_transactions = set()
+
+        for page_idx, table in enumerate(tables):
+            if len(table.columns) >= 4:
+                table.columns = range(len(table.columns))
+                transactions = process_transaction_rows(table, page_idx)
+
+                for trans in transactions:
+                    trans_key = (
+                        trans['Date'],
+                        trans['Transaction Details'],
+                        str(trans['Withdrawals ($)']),
+                        str(trans['Deposits ($)']),
+                        str(trans['Balance ($)'])
+                    )
+
+                    if trans_key not in seen_transactions:
+                        seen_transactions.add(trans_key)
+                        all_transactions.append(trans)
+
+        return all_transactions if all_transactions else None
+
+    except Exception as e:
+        logging.error(f"Error in text-based extraction: {str(e)}")
+        return None
+
+def extract_image_based_data(pdf_path):
+    """Extract data from image-based PDF using OCR"""
+    try:
+        logging.info("Converting PDF to images for OCR processing")
+        images = convert_from_path(pdf_path)
+        all_transactions = []
+
+        for i, image in enumerate(images):
+            logging.info(f"Processing page {i+1} with OCR")
+            text = extract_text_from_image(image)
+            if text:
+                transactions = process_ocr_text(text)
+                if transactions:
+                    all_transactions.extend(transactions)
+
+        return all_transactions if all_transactions else None
+
+    except Exception as e:
+        logging.error(f"Error in image-based extraction: {str(e)}")
+        return None
+
+def convert_pdf_to_data(pdf_path: str, pdf_type: str = 'text'):
+    """Extract data from PDF bank statement based on type"""
+    try:
+        logging.info(f"Starting data extraction from {pdf_path} using {pdf_type} method")
+
+        if not os.path.exists(pdf_path):
+            logging.error("PDF file not found")
+            return None
+
+        if pdf_type == 'text':
+            return extract_text_based_data(pdf_path)
+        else:  # image
+            return extract_image_based_data(pdf_path)
+
+    except Exception as e:
+        logging.error(f"Error in data extraction: {str(e)}")
+        return None
+
+def convert_pdf(pdf_path: str, output_format: str = 'excel', pdf_type: str = 'text'):
+    """Convert PDF bank statement to Excel/CSV"""
+    try:
+        # Extract data using the appropriate method
+        processed_data = convert_pdf_to_data(pdf_path, pdf_type)
+
+        if not processed_data:
+            return None
+
+        # Convert to DataFrame
+        df = pd.DataFrame(processed_data)
+
+        # Create output file
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+
+        if output_format == 'excel':
+            output_path = f"{temp_file.name}.xlsx"
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Transactions')
+                workbook = writer.book
+                worksheet = writer.sheets['Transactions']
+
+                # Format headers
+                header_font = Font(bold=True)
+                header_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+                header_alignment = Alignment(horizontal='center')
+
+                for col in range(len(df.columns)):
+                    cell = worksheet.cell(row=1, column=col+1)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = header_alignment
+
+                # Adjust column widths
+                for idx, column in enumerate(worksheet.columns, 1):
+                    max_length = max(len(str(cell.value)) for cell in column)
+                    adjusted_width = (max_length + 2)
+                    worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
+
+                # Set wrap text for transaction details
+                for cell in worksheet['B']:
+                    cell.alignment = Alignment(wrapText=True)
+        else:
+            output_path = f"{temp_file.name}.csv"
+            df.to_csv(output_path, index=False)
+
+        logging.info(f"Successfully created output file: {output_path}")
+        return output_path
+
+    except Exception as e:
+        logging.error(f"Error in conversion: {str(e)}")
         return None
 
 def process_transaction_rows(table, page_idx):
@@ -67,20 +199,13 @@ def process_transaction_rows(table, page_idx):
     # Clean the table
     table = table.dropna(how='all').reset_index(drop=True)
 
-    logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
-    logging.debug(f"Table columns: {table.columns}")
-    logging.debug(f"First few rows: {table.head()}")
-
     def process_buffer():
         if not current_buffer:
             return None
 
-        logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
-
         # Get date from first row
         date = parse_date(current_buffer[0][0])
         if not date:
-            logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
             return None
 
         # Initialize transaction
@@ -89,9 +214,7 @@ def process_transaction_rows(table, page_idx):
             'Transaction Details': '',
             'Withdrawals ($)': '',
             'Deposits ($)': '',
-            'Balance ($)': '',
-            '_page_idx': page_idx,
-            '_row_idx': int(current_buffer[0][-1])
+            'Balance ($)': ''
         }
 
         # Process all rows
@@ -100,45 +223,34 @@ def process_transaction_rows(table, page_idx):
             # Add description
             if row[1].strip():
                 details.append(row[1].strip())
-                logging.debug(f"Added description: {row[1].strip()}")
 
-            # Process amounts with detailed logging
+            # Process amounts
             withdrawal = clean_amount(row[2])
             deposit = clean_amount(row[3])
             balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-            logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
-
             # Update amounts if not already set
             if withdrawal and not transaction['Withdrawals ($)']:
                 transaction['Withdrawals ($)'] = withdrawal
-                logging.debug(f"Set withdrawal: {withdrawal}")
             if deposit and not transaction['Deposits ($)']:
                 transaction['Deposits ($)'] = deposit
-                logging.debug(f"Set deposit: {deposit}")
             if balance and not transaction['Balance ($)']:
                 transaction['Balance ($)'] = balance
-                logging.debug(f"Set balance: {balance}")
 
         # Join details
         transaction['Transaction Details'] = '\n'.join(filter(None, details))
-        logging.debug(f"Final transaction: {transaction}")
         return transaction
 
     # Process each row
     for idx, row in table.iterrows():
-        # Clean row values and add index
+        # Clean row values
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
-        row_values.append(idx)
-
-        logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
         if any(header in row_values[1].upper() for header in [
             'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
             'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
         ]):
-            logging.debug(f"Skipping header row: {row_values}")
             if current_buffer:
                 trans = process_buffer()
                 if trans:
@@ -148,9 +260,7 @@ def process_transaction_rows(table, page_idx):
 
         # Check for date and content
         has_date = bool(parse_date(row_values[0]))
-        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
-
-        logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
+        has_content = any(val.strip() for val in row_values[1:5])
 
         if has_date:
             # Process previous buffer if exists
@@ -162,31 +272,15 @@ def process_transaction_rows(table, page_idx):
 
             # Start new buffer
             current_buffer = [row_values]
-            logging.debug(f"Started new transaction: {row_values}")
-
         elif current_buffer and has_content:
             # Add to current buffer
             current_buffer.append(row_values)
-            logging.debug(f"Added to current transaction: {row_values}")
 
     # Process final buffer
     if current_buffer:
         trans = process_buffer()
         if trans:
             processed_data.append(trans)
-
-    # Sort by page and row index
-    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
-
-    # Remove tracking fields
-    for trans in processed_data:
-        trans.pop('_page_idx', None)
-        trans.pop('_row_idx', None)
-
-    # Log results
-    logging.debug(f"Processed {len(processed_data)} transactions")
-    for idx, trans in enumerate(processed_data):
-        logging.debug(f"Transaction {idx}: {trans}")
 
     return processed_data
 
@@ -240,7 +334,7 @@ def process_ocr_text(text):
                     if not current_transaction['Balance ($)']:
                         current_transaction['Balance ($)'] = amounts[-1]
                     if not current_transaction['Withdrawals ($)'] and float(amounts[0]) < 0:
-                        current_transaction['Withdrawals ($)'] = abs(float(amounts[0]))
+                        current_transaction['Withdrawals ($)'] = str(abs(float(amounts[0])))
                     elif not current_transaction['Deposits ($)'] and float(amounts[0]) > 0:
                         current_transaction['Deposits ($)'] = amounts[0]
                 else:
@@ -258,132 +352,3 @@ def process_ocr_text(text):
         transactions.append(current_transaction)
 
     return transactions
-
-def convert_pdf_to_data(pdf_path: str):
-    """Extract data from PDF bank statement and return as list of dictionaries"""
-    try:
-        logging.info(f"Starting data extraction from {pdf_path}")
-
-        if not os.path.exists(pdf_path):
-            logging.error("PDF file not found")
-            return None
-
-        # Try regular table extraction first
-        try:
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=True,
-                lattice=False,
-                stream=True,
-                pandas_options={'header': None},
-                java_options=['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-            )
-
-            if tables:
-                all_transactions = []
-                seen_transactions = set()
-
-                for page_idx, table in enumerate(tables):
-                    if len(table.columns) >= 4:
-                        table.columns = range(len(table.columns))
-                        transactions = process_transaction_rows(table, page_idx)
-
-                        for trans in transactions:
-                            trans_key = (
-                                trans['Date'],
-                                trans['Transaction Details'],
-                                str(trans['Withdrawals ($)']),
-                                str(trans['Deposits ($)']),
-                                str(trans['Balance ($)'])
-                            )
-
-                            if trans_key not in seen_transactions:
-                                seen_transactions.add(trans_key)
-                                all_transactions.append(trans)
-
-                if all_transactions:
-                    logging.info("Successfully extracted transactions using table extraction")
-                    return all_transactions
-
-        except Exception as e:
-            logging.warning(f"Table extraction failed, attempting OCR: {str(e)}")
-
-        # If table extraction failed or no transactions found, try OCR
-        logging.info("Converting PDF to images for OCR processing")
-        with tempfile.TemporaryDirectory() as temp_dir:
-            images = convert_from_path(pdf_path)
-            all_transactions = []
-
-            for i, image in enumerate(images):
-                logging.info(f"Processing page {i+1} with OCR")
-                text = extract_text_from_image(image)
-                if text:
-                    transactions = process_ocr_text(text)
-                    if transactions:
-                        all_transactions.extend(transactions)
-
-            if all_transactions:
-                logging.info(f"Successfully extracted {len(all_transactions)} transactions using OCR")
-                return all_transactions
-            else:
-                logging.error("No transactions could be extracted using either method")
-                return None
-
-    except Exception as e:
-        logging.error(f"Error in data extraction: {str(e)}")
-        return None
-
-def convert_pdf(pdf_path: str, output_format: str = 'excel'):
-    """Convert PDF bank statement to Excel/CSV"""
-    try:
-        # Extract data using the improved processing logic
-        processed_data = convert_pdf_to_data(pdf_path)
-
-        if not processed_data:
-            return None
-
-        # Convert to DataFrame
-        df = pd.DataFrame(processed_data)
-
-        # Create output file
-        temp_file = tempfile.NamedTemporaryFile(delete=False)
-
-        if output_format == 'excel':
-            output_path = f"{temp_file.name}.xlsx"
-            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Transactions')
-                workbook = writer.book
-                worksheet = writer.sheets['Transactions']
-
-                # Format headers
-                header_font = Font(bold=True)
-                header_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
-                header_alignment = Alignment(horizontal='center')
-
-                for col in range(len(df.columns)):
-                    cell = worksheet.cell(row=1, column=col+1)
-                    cell.font = header_font
-                    cell.fill = header_fill
-                    cell.alignment = header_alignment
-
-                # Adjust column widths
-                for idx, column in enumerate(worksheet.columns, 1):
-                    max_length = max(len(str(cell.value)) for cell in column)
-                    adjusted_width = (max_length + 2)
-                    worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
-
-                # Set wrap text for transaction details
-                for cell in worksheet['B']:
-                    cell.alignment = Alignment(wrapText=True)
-        else:
-            output_path = f"{temp_file.name}.csv"
-            df.to_csv(output_path, index=False)
-
-        logging.info(f"Successfully created output file: {output_path}")
-        return output_path
-
-    except Exception as e:
-        logging.error(f"Error in conversion: {str(e)}")
-        return None
