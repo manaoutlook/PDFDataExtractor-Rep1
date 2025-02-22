@@ -1,0 +1,14 @@
+email-validator
+flask
+flask-sqlalchemy
+gunicorn
+jpype1
+openpyxl
+pandas
+psycopg2-binary
+pypdf2
+tabula-py
+tomli
+trafilatura
+twilio
+werkzeug
