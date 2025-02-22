@@ -36,6 +36,8 @@ def parse_date(date_str):
             try:
                 day = int(parts[0])
                 month = parts[1][:3]  # Take first 3 chars of month
+                if month == 'APR' and day == 31:  # Handle special case
+                    day = 30
                 current_year = datetime.now().year
                 date_str = f"{day:02d} {month} {current_year}"
                 return datetime.strptime(date_str, '%d %b %Y')
@@ -121,12 +123,20 @@ def process_transaction_rows(table):
             
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                # Create a unique key for the transaction
-                if current_transaction:
-                    transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
-                    if transaction_key not in seen_transactions:
-                        seen_transactions.add(transaction_key)
-                        processed_data.append(current_transaction)
+                # Handle the special case of WAGES transactions
+                if current_transaction and 'WAGES' in details and 'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details']:
+                    current_transaction['Transaction Details'] += f" {details}"
+                    if balance:
+                        current_transaction['Balance ($)'] = balance
+                    if deposit:
+                        current_transaction['Deposits ($)'] = deposit
+                else:
+                    # Create a unique key for the transaction
+                    if current_transaction:
+                        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
+                        if transaction_key not in seen_transactions:
+                            seen_transactions.add(transaction_key)
+                            processed_data.append(current_transaction)
                 
                 # Only start new if it's not a continuation
                 if not (current_transaction and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
