@@ -52,6 +52,7 @@ def process_transaction_rows(table):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     current_transaction = None
+    seen_transactions = set()
     
     # Clean the table and skip if it's a header-only table
     table = table.dropna(how='all')
@@ -60,11 +61,12 @@ def process_transaction_rows(table):
     # Skip if table contains only headers
     if len(table) <= 1:
         return []
-        
-    # Check if this table is a continuation from previous page
-    first_row = table.iloc[0]
-    if isinstance(first_row[0], str) and not first_row[0].strip():
-        return []  # Skip duplicate continuation tables
+    
+    # Check for header rows and skip them
+    if any(col.upper().strip() in ['TRANSACTION DETAILS', 'WITHDRAWALS ($)', 'DEPOSITS ($)', 'BALANCE ($)'] 
+           for col in table.iloc[0] if isinstance(col, str)):
+        table = table.iloc[1:]
+        table = table.reset_index(drop=True)
 
     for idx, row in table.iterrows():
         # Convert row values to strings and clean
@@ -119,9 +121,15 @@ def process_transaction_rows(table):
             
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                # Only append and start new if it's not a continuation of ANZ INTERNET BANKING TRANSFER
-                if current_transaction and not (current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
-                    processed_data.append(current_transaction)
+                # Create a unique key for the transaction
+                if current_transaction:
+                    transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
+                    if transaction_key not in seen_transactions:
+                        seen_transactions.add(transaction_key)
+                        processed_data.append(current_transaction)
+                
+                # Only start new if it's not a continuation
+                if not (current_transaction and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
                     current_transaction = {
                         'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
                         'Transaction Details': details,
@@ -178,9 +186,11 @@ def process_transaction_rows(table):
                     'Balance ($)': balance
                 }
 
-    # Add the last transaction if it exists
+    # Add the last transaction if it exists and is not a duplicate
     if current_transaction:
-        processed_data.append(current_transaction)
+        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
+        if transaction_key not in seen_transactions:
+            processed_data.append(current_transaction)
 
     return processed_data
 
