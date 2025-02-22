@@ -146,7 +146,7 @@ def process_transaction_rows(table, page_idx):
 
         # Check for date and content
         has_date = bool(parse_date(row_values[0]))
-        has_content = any(val.strip() for val in row_values[1:-1])
+        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
 
         logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
