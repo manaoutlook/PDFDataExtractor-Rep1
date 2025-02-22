@@ -93,14 +93,14 @@ def process_transaction_rows(table, page_idx):
             '_row_idx': int(transaction_buffer[0][-1])  # Store original row index
         }
 
-        # Accumulate all descriptions and monetary values
+        # Process all rows in the buffer
         descriptions = []
         for row in transaction_buffer:
             # Add description if present
             if row[1].strip():
                 descriptions.append(row[1].strip())
 
-            # Check for monetary values
+            # Look for monetary values
             withdrawal = clean_amount(row[2])
             deposit = clean_amount(row[3])
             balance = clean_amount(row[4]) if len(row) > 4 else ''
@@ -139,37 +139,34 @@ def process_transaction_rows(table, page_idx):
                 transaction_buffer = []
             continue
 
-        # Check if this is a date-only row or a new transaction
-        is_date = bool(parse_date(row_values[0]))
-        has_content = any(val.strip() for val in row_values[1:-1])  # Exclude row index
+        # Check if this row has a valid date
+        date = parse_date(row_values[0])
 
-        if is_date:
-            # If this is a date-only row or a new transaction
+        if date:
+            # If we have a date, process the previous buffer if it exists
             if transaction_buffer:
-                # Process previous buffer if exists
                 transaction = process_buffer()
                 if transaction:
                     processed_data.append(transaction)
                 transaction_buffer = []
 
-            # Start new buffer
+            # Start new buffer with this row
             transaction_buffer = [row_values]
+            logging.debug(f"Started new transaction buffer with date: {row_values}")
 
-            # Log for debugging
-            logging.debug(f"Started new transaction buffer with date: {row_values[0]}")
+        elif transaction_buffer:
+            # Add non-empty rows to the current buffer
+            if any(val.strip() for val in row_values[:-1]):  # Exclude row index from check
+                transaction_buffer.append(row_values)
+                logging.debug(f"Added continuation line to buffer: {row_values}")
 
-        elif transaction_buffer and has_content:
-            # Add continuation line to current transaction
-            transaction_buffer.append(row_values)
-            logging.debug(f"Added continuation line to buffer: {row_values}")
-
-    # Process final buffer
+    # Process the final buffer
     if transaction_buffer:
         transaction = process_buffer()
         if transaction:
             processed_data.append(transaction)
 
-    # Log all processed transactions for debugging
+    # Log all processed transactions for verification
     for idx, trans in enumerate(processed_data):
         logging.debug(f"Final transaction {idx}: {trans}")
 
