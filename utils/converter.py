@@ -94,11 +94,10 @@ def process_transaction_rows(table, page_idx):
         }
 
         # Accumulate description and find monetary values
-        descriptions = []
         for idx, row in enumerate(transaction_buffer):
             # Add non-empty descriptions
             if row[1].strip():
-                descriptions.append(row[1].strip())
+                transaction['Transaction Details'] += f"\n{row[1].strip()}"
 
             # Look for monetary values in each row
             withdrawal = clean_amount(row[2])
@@ -106,15 +105,13 @@ def process_transaction_rows(table, page_idx):
             balance = clean_amount(row[4]) if len(row) > 4 else ''
 
             # Update monetary values if found and current values are empty
-            if withdrawal and not transaction['Withdrawals ($)']:
+            if withdrawal:
                 transaction['Withdrawals ($)'] = withdrawal
-            if deposit and not transaction['Deposits ($)']:
+            if deposit:
                 transaction['Deposits ($)'] = deposit
-            if balance and not transaction['Balance ($)']:
+            if balance:
                 transaction['Balance ($)'] = balance
 
-        # Join descriptions
-        transaction['Transaction Details'] = '\n'.join(filter(None, descriptions))
 
         logging.debug(f"Processed transaction: {transaction}")
         return transaction
