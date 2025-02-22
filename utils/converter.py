@@ -105,10 +105,14 @@ def process_transaction_rows(table):
             # Handle continuation lines
             details = row_values[1].strip()
             
-            # Special handling for multi-line transactions with additional info
-            if details and 'WAGES' in details:
-                if current_transaction['Transaction Details']:
-                    current_transaction['Transaction Details'] += f" - {details}"
+            # Handle multi-line transactions
+            if details:
+                base_details = current_transaction['Transaction Details']
+                if 'ANZ' in base_details and ('WAGES' in details or 'CLEANING' in details):
+                    # For ANZ transactions with additional details, add on new line
+                    current_transaction['Transaction Details'] = f"{base_details}\n{details}"
+                elif current_transaction['Transaction Details']:
+                    current_transaction['Transaction Details'] += f" {details}"
                 else:
                     current_transaction['Transaction Details'] = details
             elif details:
