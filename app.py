@@ -8,9 +8,8 @@ import tempfile
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-app = Flask(__name__, static_url_path='', static_folder='static')
+app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "your-secret-key")
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 # Configuration
 ALLOWED_EXTENSIONS = {'pdf'}
