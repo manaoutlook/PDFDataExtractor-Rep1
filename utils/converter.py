@@ -38,18 +38,33 @@ def parse_date(date_str):
         date_str = str(date_str).strip().upper()
 
         # Skip rows that aren't dates
-        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
+        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING', 'PAGE', 'DATE']):
             return None
 
         # Handle various date formats
         parts = date_str.split()
-        if len(parts) == 2:  # e.g., "26 APR"
+
+        # Look for patterns like "26 APR" or "26 APR 2024"
+        if len(parts) >= 2:
             try:
-                day = int(parts[0])
-                month = parts[1][:3]  # Take first 3 chars of month
-                current_year = datetime.now().year
-                date_str = f"{day:02d} {month} {current_year}"
-                return datetime.strptime(date_str, '%d %b %Y')
+                # Extract day and month
+                try:
+                    day = int(''.join(filter(str.isdigit, parts[0])))
+                except ValueError:
+                    return None
+
+                # Find month in the parts
+                month = None
+                for part in parts[1:]:
+                    if part[:3] in ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 
+                                  'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']:
+                        month = part[:3]
+                        break
+
+                if month and 1 <= day <= 31:
+                    current_year = datetime.now().year
+                    date_str = f"{day:02d} {month} {current_year}"
+                    return datetime.strptime(date_str, '%d %b %Y')
             except (ValueError, IndexError) as e:
                 logging.debug(f"Error parsing date {date_str}: {str(e)}")
                 return None
@@ -107,8 +122,8 @@ def extract_text_based_data(pdf_path):
 def extract_text_from_image(image):
     """Extract text from image using OCR"""
     try:
-        # Configure tesseract for better accuracy
-        custom_config = r'--oem 3 --psm 6'
+        # Configure tesseract for better accuracy with financial documents
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,$()-/ "'
         text = pytesseract.image_to_string(image, config=custom_config)
         logging.debug(f"Extracted OCR text: {text[:200]}...")  # Log first 200 chars
         return text
@@ -156,7 +171,23 @@ def process_ocr_text(text):
 
             if current_transaction:
                 # Try to extract amounts
-                amounts = [clean_amount(amt) for amt in line.split() if '$' in amt or any(c.isdigit() for c in amt)]
+                amounts = []
+                parts = line.split()
+                for part in parts:
+                    # Clean up the amount string
+                    clean_part = part.replace('$', '').replace(',', '').strip()
+                    # Check for amount patterns
+                    if ('$' in part or '.' in clean_part) and any(c.isdigit() for c in clean_part):
+                        try:
+                            # Handle negative amounts in parentheses
+                            if '(' in clean_part and ')' in clean_part:
+                                clean_part = '-' + clean_part.replace('(', '').replace(')', '')
+                            # Validate as float
+                            float(clean_part)
+                            amounts.append(clean_part)
+                        except ValueError:
+                            continue
+
                 logging.debug(f"Found amounts in line: {amounts}")
 
                 if amounts:
@@ -184,7 +215,7 @@ def process_ocr_text(text):
             logging.debug(f"Added final transaction: {current_transaction}")
 
         logging.info(f"Extracted {len(transactions)} transactions from OCR text")
-        return transactions
+        return transactions if transactions else None
 
     except Exception as e:
         logging.error(f"Error processing OCR text: {str(e)}")
@@ -194,8 +225,13 @@ def extract_image_based_data(pdf_path):
     """Extract data from image-based PDF using OCR"""
     try:
         logging.info("Converting PDF to images for OCR processing")
-        # Use higher DPI for better OCR accuracy
-        images = convert_from_path(pdf_path, dpi=300)
+        # Use higher DPI and optimize for text
+        images = convert_from_path(
+            pdf_path, 
+            dpi=300,
+            grayscale=True,
+            thread_count=2
+        )
         logging.info(f"Converted PDF to {len(images)} images")
 
         all_transactions = []
