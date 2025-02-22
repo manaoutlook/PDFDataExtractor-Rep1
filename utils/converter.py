@@ -169,19 +169,16 @@ def process_transaction_rows(table):
                     if balance:
                         current_transaction['Balance ($)'] = balance
             # Handle continuation lines for existing transaction
-            elif details:
-                if current_transaction and ('WAGES' in details or 'CLEANING' in details):
-                    if current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
-                        current_transaction['Transaction Details'] += f" {details}"
-                    else:
-                        current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-                elif current_transaction:
+            if current_transaction and ('WAGES' in details or 'CLEANING' in details):
+                if current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
                     current_transaction['Transaction Details'] += f" {details}"
-            elif details:
+                else:
+                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
+                if deposit:
+                    current_transaction['Deposits ($)'] = deposit
+                if balance:
+                    current_transaction['Balance ($)'] = balance
+            elif current_transaction and details:
                 if current_transaction['Transaction Details']:
                     current_transaction['Transaction Details'] += f" {details}"
                 else:
