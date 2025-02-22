@@ -13,16 +13,20 @@ def clean_amount(amount_str):
     """Clean and format amount strings"""
     if pd.isna(amount_str):
         return ''
-    # Remove currency symbols and cleanup
-    amount_str = str(amount_str).replace('$', '').replace(',', '').strip()
-    # Handle brackets for negative numbers
-    if '(' in amount_str and ')' in amount_str:
-        amount_str = '-' + amount_str.replace('(', '').replace(')', '')
     try:
-        # Try to convert to float to validate
-        float(amount_str)
-        return amount_str
-    except ValueError:
+        # Remove currency symbols and cleanup
+        amount_str = str(amount_str).replace('$', '').replace(',', '').strip()
+        # Handle brackets for negative numbers
+        if '(' in amount_str and ')' in amount_str:
+            amount_str = '-' + amount_str.replace('(', '').replace(')', '')
+        try:
+            # Try to convert to float to validate
+            float(amount_str)
+            return amount_str
+        except ValueError:
+            return ''
+    except Exception as e:
+        logging.debug(f"Error cleaning amount {amount_str}: {str(e)}")
         return ''
 
 def parse_date(date_str):
@@ -46,7 +50,8 @@ def parse_date(date_str):
                 current_year = datetime.now().year
                 date_str = f"{day:02d} {month} {current_year}"
                 return datetime.strptime(date_str, '%d %b %Y')
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
+                logging.debug(f"Error parsing date {date_str}: {str(e)}")
                 return None
 
         return None
@@ -99,11 +104,100 @@ def extract_text_based_data(pdf_path):
         logging.error(f"Error in text-based extraction: {str(e)}")
         return None
 
+def extract_text_from_image(image):
+    """Extract text from image using OCR"""
+    try:
+        # Configure tesseract for better accuracy
+        custom_config = r'--oem 3 --psm 6'
+        text = pytesseract.image_to_string(image, config=custom_config)
+        logging.debug(f"Extracted OCR text: {text[:200]}...")  # Log first 200 chars
+        return text
+    except Exception as e:
+        logging.error(f"OCR extraction error: {str(e)}")
+        return None
+
+def process_ocr_text(text):
+    """Process OCR extracted text into structured data"""
+    try:
+        if not text:
+            return None
+
+        transactions = []
+        lines = text.split('\n')
+        current_transaction = None
+
+        logging.debug(f"Processing {len(lines)} lines of OCR text")
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            logging.debug(f"Processing line: {line}")
+
+            # Try to parse as date
+            date = parse_date(line)
+            if date:
+                logging.debug(f"Found date: {date}")
+                # Save previous transaction if exists
+                if current_transaction:
+                    transactions.append(current_transaction)
+                    logging.debug(f"Added transaction: {current_transaction}")
+
+                # Start new transaction
+                current_transaction = {
+                    'Date': date.strftime('%d %b'),
+                    'Transaction Details': '',
+                    'Withdrawals ($)': '',
+                    'Deposits ($)': '',
+                    'Balance ($)': ''
+                }
+                continue
+
+            if current_transaction:
+                # Try to extract amounts
+                amounts = [clean_amount(amt) for amt in line.split() if '$' in amt or any(c.isdigit() for c in amt)]
+                logging.debug(f"Found amounts in line: {amounts}")
+
+                if amounts:
+                    # Assume last amount is balance if multiple amounts found
+                    if len(amounts) > 1:
+                        if not current_transaction['Balance ($)']:
+                            current_transaction['Balance ($)'] = amounts[-1]
+                        if not current_transaction['Withdrawals ($)'] and float(amounts[0]) < 0:
+                            current_transaction['Withdrawals ($)'] = str(abs(float(amounts[0])))
+                        elif not current_transaction['Deposits ($)'] and float(amounts[0]) > 0:
+                            current_transaction['Deposits ($)'] = amounts[0]
+                    else:
+                        # Single amount - add to transaction details
+                        current_transaction['Transaction Details'] += f" {line}"
+                else:
+                    # Add to transaction details if no amounts found
+                    if current_transaction['Transaction Details']:
+                        current_transaction['Transaction Details'] += f" {line}"
+                    else:
+                        current_transaction['Transaction Details'] = line
+
+        # Add last transaction
+        if current_transaction:
+            transactions.append(current_transaction)
+            logging.debug(f"Added final transaction: {current_transaction}")
+
+        logging.info(f"Extracted {len(transactions)} transactions from OCR text")
+        return transactions
+
+    except Exception as e:
+        logging.error(f"Error processing OCR text: {str(e)}")
+        return None
+
 def extract_image_based_data(pdf_path):
     """Extract data from image-based PDF using OCR"""
     try:
         logging.info("Converting PDF to images for OCR processing")
-        images = convert_from_path(pdf_path)
+        # Use higher DPI for better OCR accuracy
+        images = convert_from_path(pdf_path, dpi=300)
+        logging.info(f"Converted PDF to {len(images)} images")
+
         all_transactions = []
 
         for i, image in enumerate(images):
@@ -113,8 +207,15 @@ def extract_image_based_data(pdf_path):
                 transactions = process_ocr_text(text)
                 if transactions:
                     all_transactions.extend(transactions)
+                    logging.info(f"Found {len(transactions)} transactions on page {i+1}")
+                else:
+                    logging.warning(f"No transactions found on page {i+1}")
 
-        return all_transactions if all_transactions else None
+        if not all_transactions:
+            logging.error("No transactions could be extracted from any page")
+            return None
+
+        return all_transactions
 
     except Exception as e:
         logging.error(f"Error in image-based extraction: {str(e)}")
@@ -130,9 +231,16 @@ def convert_pdf_to_data(pdf_path: str, pdf_type: str = 'text'):
             return None
 
         if pdf_type == 'text':
-            return extract_text_based_data(pdf_path)
+            data = extract_text_based_data(pdf_path)
         else:  # image
-            return extract_image_based_data(pdf_path)
+            data = extract_image_based_data(pdf_path)
+
+        if data:
+            logging.info(f"Successfully extracted {len(data)} transactions")
+            return data
+        else:
+            logging.error("No transactions could be extracted from the PDF")
+            return None
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
@@ -283,72 +391,3 @@ def process_transaction_rows(table, page_idx):
             processed_data.append(trans)
 
     return processed_data
-
-def extract_text_from_image(image):
-    """Extract text from image using OCR"""
-    try:
-        text = pytesseract.image_to_string(image)
-        return text
-    except Exception as e:
-        logging.error(f"OCR extraction error: {str(e)}")
-        return None
-
-def process_ocr_text(text):
-    """Process OCR extracted text into structured data"""
-    if not text:
-        return None
-
-    transactions = []
-    lines = text.split('\n')
-    current_transaction = None
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        # Try to parse as date
-        date = parse_date(line)
-        if date:
-            # Save previous transaction if exists
-            if current_transaction:
-                transactions.append(current_transaction)
-
-            # Start new transaction
-            current_transaction = {
-                'Date': date.strftime('%d %b'),
-                'Transaction Details': '',
-                'Withdrawals ($)': '',
-                'Deposits ($)': '',
-                'Balance ($)': ''
-            }
-            continue
-
-        if current_transaction:
-            # Try to extract amounts
-            amounts = [clean_amount(amt) for amt in line.split() if '$' in amt or any(c.isdigit() for c in amt)]
-
-            if amounts:
-                # Assume last amount is balance if multiple amounts found
-                if len(amounts) > 1:
-                    if not current_transaction['Balance ($)']:
-                        current_transaction['Balance ($)'] = amounts[-1]
-                    if not current_transaction['Withdrawals ($)'] and float(amounts[0]) < 0:
-                        current_transaction['Withdrawals ($)'] = str(abs(float(amounts[0])))
-                    elif not current_transaction['Deposits ($)'] and float(amounts[0]) > 0:
-                        current_transaction['Deposits ($)'] = amounts[0]
-                else:
-                    # Single amount - add to transaction details
-                    current_transaction['Transaction Details'] += f" {line}"
-            else:
-                # Add to transaction details if no amounts found
-                if current_transaction['Transaction Details']:
-                    current_transaction['Transaction Details'] += f" {line}"
-                else:
-                    current_transaction['Transaction Details'] = line
-
-    # Add last transaction
-    if current_transaction:
-        transactions.append(current_transaction)
-
-    return transactions
