@@ -121,14 +121,17 @@ def process_transaction_rows(table):
             # Handle continuation lines
             details = row_values[1].strip()
 
+            # Special handling for WAGES transactions
+            if current_transaction and 'WAGES' in details and 'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details']:
+                current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']} {details}"
+                if deposit:
+                    current_transaction['Deposits ($)'] = deposit
+                if balance:
+                    current_transaction['Balance ($)'] = balance
+                continue
+
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                # Handle the special case of WAGES transactions
-                if (current_transaction and 
-                    ((details and 'WAGES' in details) or 
-                     (current_transaction['Transaction Details'] and 'WAGES' in current_transaction['Transaction Details'])) and
-                    ('ANZ INTERNET BANKING TRANSFER' in details or 
-                     'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details'])):
                     # Combine the details if they're split across lines
                     if 'WAGES' in details:
                         current_transaction['Transaction Details'] = details
