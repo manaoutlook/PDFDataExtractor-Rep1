@@ -61,6 +61,7 @@ def process_transaction_rows(table, page_idx):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     current_transaction = None
+    pending_description_lines = []
     pending_monetary_values = None
 
     # Clean the table
@@ -82,6 +83,7 @@ def process_transaction_rows(table, page_idx):
             'TOTALS AT END OF PAGE', 'TOTALS AT END OF PERIOD', 'TOTALS FOR PERIOD'
         ]):
             pending_monetary_values = None
+            pending_description_lines = []
             continue
 
         # Parse date and monetary values
@@ -90,20 +92,26 @@ def process_transaction_rows(table, page_idx):
         deposit = clean_amount(row_values[3])
         balance = clean_amount(row_values[4]) if len(row_values) > 4 else ''
 
-        # Check if this row has monetary values but no date
+        # Check if this row has monetary values
         has_monetary_values = bool(withdrawal or deposit or balance)
 
         # Start new transaction if we have a date
         if date:
-            # If we have pending monetary values and a current transaction, apply them before starting new
-            if pending_monetary_values and current_transaction:
-                current_transaction.update(pending_monetary_values)
-                pending_monetary_values = None
-
-            # Add the previous transaction if exists
+            # If we have a current transaction with pending items, finalize it
             if current_transaction:
+                # Add any pending description lines
+                if pending_description_lines:
+                    current_transaction['Transaction Details'] += '\n' + '\n'.join(pending_description_lines)
+                    pending_description_lines = []
+
+                # Add any pending monetary values
+                if pending_monetary_values:
+                    current_transaction.update(pending_monetary_values)
+                    pending_monetary_values = None
+
                 processed_data.append(current_transaction)
 
+            # Create new transaction
             current_transaction = {
                 'Date': date.strftime('%d %b'),
                 'Transaction Details': row_values[1].strip(),
@@ -114,39 +122,47 @@ def process_transaction_rows(table, page_idx):
                 '_row_idx': idx
             }
 
-            # If this row has no monetary values, prepare to accept them from next row
+            # If this row has no monetary values, prepare to accept them from subsequent rows
             if not has_monetary_values:
                 pending_monetary_values = {}
-                logging.debug(f"New transaction with no monetary values, waiting for next row: {current_transaction}")
+                logging.debug(f"New transaction started, waiting for monetary values: {current_transaction}")
 
         elif current_transaction:
             # Handle continuation lines
             if row_values[1].strip():
-                current_transaction['Transaction Details'] += f"\n{row_values[1].strip()}"
+                # Add to pending description lines
+                pending_description_lines.append(row_values[1].strip())
+                logging.debug(f"Added description line: {row_values[1].strip()}")
 
-            # If we have pending monetary values and this row has them, update the transaction
-            if pending_monetary_values is not None and has_monetary_values:
-                current_transaction.update({
+            # Update monetary values if present
+            if has_monetary_values:
+                monetary_update = {
                     'Withdrawals ($)': withdrawal if withdrawal else current_transaction['Withdrawals ($)'],
                     'Deposits ($)': deposit if deposit else current_transaction['Deposits ($)'],
                     'Balance ($)': balance if balance else current_transaction['Balance ($)']
-                })
-                pending_monetary_values = None
-                logging.debug(f"Updated transaction with pending monetary values: {current_transaction}")
-            # Otherwise update any non-empty monetary values
-            elif has_monetary_values:
-                if withdrawal and not current_transaction['Withdrawals ($)']:
-                    current_transaction['Withdrawals ($)'] = withdrawal
-                if deposit and not current_transaction['Deposits ($)']:
-                    current_transaction['Deposits ($)'] = deposit
-                if balance and not current_transaction['Balance ($)']:
-                    current_transaction['Balance ($)'] = balance
-                logging.debug(f"Updated transaction with continuation line monetary values: {current_transaction}")
+                }
 
-    # Add the last transaction
+                # If we were waiting for monetary values, update the transaction
+                if pending_monetary_values is not None:
+                    current_transaction.update(monetary_update)
+                    pending_monetary_values = None
+                    # Also add any pending description lines
+                    if pending_description_lines:
+                        current_transaction['Transaction Details'] += '\n' + '\n'.join(pending_description_lines)
+                        pending_description_lines = []
+                    logging.debug(f"Updated transaction with monetary values and descriptions: {current_transaction}")
+                # Otherwise only update empty values
+                elif not current_transaction['Withdrawals ($)'] or not current_transaction['Deposits ($)'] or not current_transaction['Balance ($)']:
+                    current_transaction.update(monetary_update)
+                    logging.debug(f"Updated transaction with new monetary values: {current_transaction}")
+
+    # Handle the last transaction
     if current_transaction:
-        # Apply any pending monetary values
-        if pending_monetary_values and current_transaction:
+        # Add any pending description lines
+        if pending_description_lines:
+            current_transaction['Transaction Details'] += '\n' + '\n'.join(pending_description_lines)
+        # Add any pending monetary values
+        if pending_monetary_values:
             current_transaction.update(pending_monetary_values)
         processed_data.append(current_transaction)
 
