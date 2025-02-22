@@ -75,9 +75,11 @@ def process_transaction_rows(table, page_idx):
 
         logging.debug(f"Processing row {idx} on page {page_idx}: {row_values}")
 
-        # Skip header-like rows
-        if any(header in str(row_values[1]).upper() for header in 
-               ['TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE', 'OPENING']):
+        # Skip header-like rows and total rows
+        if any(header in str(row_values[1]).upper() for header in [
+            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE', 'OPENING',
+            'TOTALS AT END OF PAGE', 'TOTALS AT END OF PERIOD', 'TOTALS FOR PERIOD'
+        ]):
             continue
 
         # Parse date and monetary values
