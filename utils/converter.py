@@ -82,18 +82,20 @@ def process_transaction_rows(table, page_idx):
         if not date:
             return None
 
-        # Initialize transaction
+        # Initialize transaction with tracking fields
         transaction = {
             'Date': date.strftime('%d %b'),
             'Transaction Details': '',
             'Withdrawals ($)': '',
             'Deposits ($)': '',
-            'Balance ($)': ''
+            'Balance ($)': '',
+            '_page_idx': page_idx,
+            '_row_idx': int(transaction_buffer[0][-1])  # Store original row index
         }
 
         # Accumulate description and find monetary values
         descriptions = []
-        for row in transaction_buffer:
+        for idx, row in enumerate(transaction_buffer):
             # Add non-empty descriptions
             if row[1].strip():
                 descriptions.append(row[1].strip())
@@ -103,16 +105,16 @@ def process_transaction_rows(table, page_idx):
             deposit = clean_amount(row[3])
             balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-            # Update monetary values if found
-            if withdrawal:
+            # Update monetary values if found and current values are empty
+            if withdrawal and not transaction['Withdrawals ($)']:
                 transaction['Withdrawals ($)'] = withdrawal
-            if deposit:
+            if deposit and not transaction['Deposits ($)']:
                 transaction['Deposits ($)'] = deposit
-            if balance:
+            if balance and not transaction['Balance ($)']:
                 transaction['Balance ($)'] = balance
 
         # Join descriptions
-        transaction['Transaction Details'] = '\n'.join(descriptions)
+        transaction['Transaction Details'] = '\n'.join(filter(None, descriptions))
 
         logging.debug(f"Processed transaction: {transaction}")
         return transaction
@@ -120,6 +122,7 @@ def process_transaction_rows(table, page_idx):
     for idx, row in table.iterrows():
         # Convert row values to strings and clean
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
+        row_values.append(idx)  # Add row index for tracking
 
         logging.debug(f"Processing row {idx} on page {page_idx}: {row_values}")
 
@@ -148,7 +151,7 @@ def process_transaction_rows(table, page_idx):
             transaction_buffer = [row_values]
         else:
             # Add to current buffer if it exists and row has content
-            if transaction_buffer and any(val.strip() for val in row_values):
+            if transaction_buffer and any(val.strip() for val in row_values[:-1]):  # Exclude row index from content check
                 transaction_buffer.append(row_values)
 
     # Process final buffer
