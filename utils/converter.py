@@ -64,7 +64,7 @@ def process_transaction_rows(table):
         return []
 
     # Check for header rows and skip them
-    if any(col.upper().strip() in ['TRANSACTION DETAILS', 'WITHDRAWALS ($)', 'DEPOSITS ($)', 'BALANCE ($)'] 
+    if any(col.upper().strip() in ['TRANSACTION DETAILS', 'WITHDRAWALS ($)', 'DEPOSITS ($)', 'BALANCE ($)']
            for col in table.iloc[0] if isinstance(col, str)):
         table = table.iloc[1:]
         table = table.reset_index(drop=True)
@@ -76,7 +76,7 @@ def process_transaction_rows(table):
         logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
-        if any(header in str(row_values[1]).upper() for header in 
+        if any(header in str(row_values[1]).upper() for header in
                ['TRANSACTION DETAILS -WITHDRAWALS', 'TRANSACTION DETAILS', '-WITHDRAWALS', '-DEPOSITS', '-BALANCE']):
             logging.debug(f"Skipping header row: {row_values}")
             continue
@@ -166,15 +166,16 @@ def convert_pdf_to_data(pdf_path: str):
 
         all_transactions = []
         seen_transactions = set()
+        current_year = datetime.now().year
 
         # Process each table
-        for idx, table in enumerate(tables):
-            logging.debug(f"Processing table {idx+1}, shape: {table.shape}")
+        for page_idx, table in enumerate(tables):
+            logging.debug(f"Processing table {page_idx+1}, shape: {table.shape}")
             if len(table.columns) >= 4:
                 table.columns = range(len(table.columns))
                 transactions = process_transaction_rows(table)
 
-                # Add unique transactions
+                # Add unique transactions with page information
                 for trans in transactions:
                     # Create a more comprehensive transaction key
                     trans_key = (
@@ -187,6 +188,8 @@ def convert_pdf_to_data(pdf_path: str):
 
                     if trans_key not in seen_transactions:
                         seen_transactions.add(trans_key)
+                        # Add page information to help with sorting
+                        trans['_page_idx'] = page_idx
                         all_transactions.append(trans)
                     else:
                         logging.debug(f"Skipping duplicate transaction: {trans}")
@@ -195,11 +198,16 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("No transactions extracted from tables")
             return None
 
-        # Sort transactions by date and balance
+        # Sort transactions by page first, then by date and balance
         all_transactions.sort(key=lambda x: (
-            datetime.strptime(x['Date'] + " 2025", '%d %b %Y') if x['Date'] else datetime.max,
+            x['_page_idx'],
+            datetime.strptime(f"{x['Date']} {current_year}", '%d %b %Y') if x['Date'] else datetime.max,
             float(x['Balance ($)'].replace(',', '')) if x['Balance ($)'] else 0
         ))
+
+        # Remove the temporary _page_idx field
+        for trans in all_transactions:
+            trans.pop('_page_idx', None)
 
         logging.info(f"Successfully extracted {len(all_transactions)} unique transactions")
         return all_transactions
