@@ -79,8 +79,11 @@ def process_transaction_rows(table):
             })
             continue
 
-        # Skip totals row
+        # Skip totals row but process transactions before it
         if 'TOTALS AT END OF PERIOD' in str(row_values[1]).upper():
+            if current_transaction:
+                processed_data.append(current_transaction)
+                current_transaction = None
             continue
 
         # Parse date and monetary values
@@ -105,8 +108,8 @@ def process_transaction_rows(table):
             # Handle continuation lines
             details = row_values[1].strip()
             
-            # Start a new transaction if we have a date or it's a new transaction type
-            if date or (details and details.startswith('ANZ')):
+            # Start a new transaction if we have a date or specific transaction markers
+            if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
                 if current_transaction:
                     processed_data.append(current_transaction)
                 
