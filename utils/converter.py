@@ -110,20 +110,32 @@ def process_transaction_rows(table):
             
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                if current_transaction:
+                # Only append and start new if it's not a continuation of ANZ INTERNET BANKING TRANSFER
+                if current_transaction and not (current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
                     processed_data.append(current_transaction)
-                
-                current_transaction = {
-                    'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
-                    'Transaction Details': details,
-                    'Withdrawals ($)': withdrawal,
-                    'Deposits ($)': deposit,
-                    'Balance ($)': balance
-                }
+                    current_transaction = {
+                        'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
+                        'Transaction Details': details,
+                        'Withdrawals ($)': withdrawal,
+                        'Deposits ($)': deposit,
+                        'Balance ($)': balance
+                    }
+                else:
+                    # Continue the existing transaction
+                    current_transaction['Transaction Details'] = details
+                    if withdrawal:
+                        current_transaction['Withdrawals ($)'] = withdrawal
+                    if deposit:
+                        current_transaction['Deposits ($)'] = deposit
+                    if balance:
+                        current_transaction['Balance ($)'] = balance
             # Handle continuation lines for existing transaction
             elif details:
                 if current_transaction and ('WAGES' in details or 'CLEANING' in details):
-                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
+                    if current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
+                        current_transaction['Transaction Details'] += f" {details}"
+                    else:
+                        current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
                     if deposit:
                         current_transaction['Deposits ($)'] = deposit
                     if balance:
