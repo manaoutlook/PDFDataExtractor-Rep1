@@ -55,15 +55,15 @@ def process_transaction_rows(table):
     processed_data = []
     current_transaction = None
     seen_transactions = set()
-    
+
     # Clean the table and skip if it's a header-only table
     table = table.dropna(how='all')
     table = table.reset_index(drop=True)
-    
+
     # Skip if table contains only headers
     if len(table) <= 1:
         return []
-    
+
     # Check for header rows and skip them
     if any(col.upper().strip() in ['TRANSACTION DETAILS', 'WITHDRAWALS ($)', 'DEPOSITS ($)', 'BALANCE ($)'] 
            for col in table.iloc[0] if isinstance(col, str)):
@@ -120,12 +120,21 @@ def process_transaction_rows(table):
         elif current_transaction and any(val.strip() for val in row_values):
             # Handle continuation lines
             details = row_values[1].strip()
-            
+
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
                 # Handle the special case of WAGES transactions
-                if current_transaction and 'WAGES' in details and 'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details']:
-                    current_transaction['Transaction Details'] += f" {details}"
+                if (current_transaction and 
+                    ((details and 'WAGES' in details) or 
+                     (current_transaction['Transaction Details'] and 'WAGES' in current_transaction['Transaction Details'])) and
+                    ('ANZ INTERNET BANKING TRANSFER' in details or 
+                     'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details'])):
+                    # Combine the details if they're split across lines
+                    if 'WAGES' in details:
+                        current_transaction['Transaction Details'] = details
+                    else:
+                        current_transaction['Transaction Details'] += f" {details}"
+
                     if balance:
                         current_transaction['Balance ($)'] = balance
                     if deposit:
@@ -137,7 +146,7 @@ def process_transaction_rows(table):
                         if transaction_key not in seen_transactions:
                             seen_transactions.add(transaction_key)
                             processed_data.append(current_transaction)
-                
+
                 # Only start new if it's not a continuation
                 if not (current_transaction and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
                     current_transaction = {
