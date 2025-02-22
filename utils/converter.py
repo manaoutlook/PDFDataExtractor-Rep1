@@ -60,29 +60,23 @@ def parse_date(date_str):
 def process_transaction_rows(table, page_idx):
     """Process rows and handle multi-line transactions"""
     processed_data = []
-    transaction_buffer = []
+    current_buffer = []
 
     # Clean the table
     table = table.dropna(how='all').reset_index(drop=True)
 
-    # Skip if table is empty or contains only headers
-    if len(table) <= 1:
-        return []
-
     def process_buffer():
-        """Process accumulated transaction buffer"""
-        if not transaction_buffer:
+        if not current_buffer:
             return None
 
-        # Log the buffer content for debugging
-        logging.debug(f"Processing buffer: {transaction_buffer}")
+        logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
 
-        # Get the date from the first row
-        date = parse_date(transaction_buffer[0][0])
+        # Get date from first row
+        date = parse_date(current_buffer[0][0])
         if not date:
             return None
 
-        # Initialize transaction with tracking fields
+        # Initialize transaction
         transaction = {
             'Date': date.strftime('%d %b'),
             'Transaction Details': '',
@@ -90,22 +84,22 @@ def process_transaction_rows(table, page_idx):
             'Deposits ($)': '',
             'Balance ($)': '',
             '_page_idx': page_idx,
-            '_row_idx': int(transaction_buffer[0][-1])  # Store original row index
+            '_row_idx': int(current_buffer[0][-1])
         }
 
-        # Process all rows in the buffer
-        descriptions = []
-        for row in transaction_buffer:
-            # Add description if present
+        # Process all rows
+        details = []
+        for row in current_buffer:
+            # Add description
             if row[1].strip():
-                descriptions.append(row[1].strip())
+                details.append(row[1].strip())
 
-            # Look for monetary values
+            # Process amounts
             withdrawal = clean_amount(row[2])
             deposit = clean_amount(row[3])
             balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-            # Update monetary values if found and current values are empty
+            # Update amounts if not already set
             if withdrawal and not transaction['Withdrawals ($)']:
                 transaction['Withdrawals ($)'] = withdrawal
             if deposit and not transaction['Deposits ($)']:
@@ -113,62 +107,72 @@ def process_transaction_rows(table, page_idx):
             if balance and not transaction['Balance ($)']:
                 transaction['Balance ($)'] = balance
 
-        # Join descriptions
-        transaction['Transaction Details'] = '\n'.join(filter(None, descriptions))
+        # Join details
+        transaction['Transaction Details'] = '\n'.join(filter(None, details))
 
         logging.debug(f"Processed transaction: {transaction}")
         return transaction
 
+    # Process each row
     for idx, row in table.iterrows():
-        # Convert row values to strings and clean
+        # Clean row values and add index
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
-        row_values.append(idx)  # Add row index for tracking
+        row_values.append(idx)
 
-        logging.debug(f"Processing row {idx} on page {page_idx}: {row_values}")
+        logging.debug(f"Processing row {idx}: {row_values}")
 
-        # Skip header-like rows
-        if any(header in str(row_values[1]).upper() for header in [
-            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE', 'OPENING',
-            'TOTALS AT END OF PAGE', 'TOTALS AT END OF PERIOD', 'TOTALS FOR PERIOD'
+        # Skip header rows
+        if any(header in row_values[1].upper() for header in [
+            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
+            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
         ]):
-            # Process any buffered transaction before skipping
-            if transaction_buffer:
-                transaction = process_buffer()
-                if transaction:
-                    processed_data.append(transaction)
-                transaction_buffer = []
+            # Process any current buffer before skipping
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
             continue
 
-        # Check if this row has a valid date
-        date = parse_date(row_values[0])
+        # Check for date
+        has_date = bool(parse_date(row_values[0]))
+        has_content = any(val.strip() for val in row_values[1:-1])
 
-        if date:
-            # If we have a date, process the previous buffer if it exists
-            if transaction_buffer:
-                transaction = process_buffer()
-                if transaction:
-                    processed_data.append(transaction)
-                transaction_buffer = []
+        if has_date:
+            # Process previous buffer if exists
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
 
-            # Start new buffer with this row
-            transaction_buffer = [row_values]
-            logging.debug(f"Started new transaction buffer with date: {row_values}")
+            # Start new buffer
+            current_buffer = [row_values]
+            logging.debug(f"Started new transaction: {row_values}")
 
-        elif transaction_buffer:
-            # Add non-empty rows to the current buffer
-            if any(val.strip() for val in row_values[:-1]):  # Exclude row index from check
-                transaction_buffer.append(row_values)
-                logging.debug(f"Added continuation line to buffer: {row_values}")
+        elif current_buffer and has_content:
+            # Add to current buffer
+            current_buffer.append(row_values)
+            logging.debug(f"Added to current transaction: {row_values}")
 
-    # Process the final buffer
-    if transaction_buffer:
-        transaction = process_buffer()
-        if transaction:
-            processed_data.append(transaction)
+    # Process final buffer
+    if current_buffer:
+        trans = process_buffer()
+        if trans:
+            processed_data.append(trans)
 
-    # Log all processed transactions for verification
+    # Sort by page and row index
+    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
+
+    # Remove tracking fields
+    for trans in processed_data:
+        trans.pop('_page_idx', None)
+        trans.pop('_row_idx', None)
+
+    # Log results
+    logging.debug(f"Processed {len(processed_data)} transactions")
     for idx, trans in enumerate(processed_data):
-        logging.debug(f"Final transaction {idx}: {trans}")
+        logging.debug(f"Transaction {idx}: {trans}")
 
     return processed_data
 
