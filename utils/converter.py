@@ -3,6 +3,8 @@ import tempfile
 import pandas as pd
 import tabula
 import os
+import pytesseract
+from pdf2image import convert_from_path
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -188,6 +190,75 @@ def process_transaction_rows(table, page_idx):
 
     return processed_data
 
+def extract_text_from_image(image):
+    """Extract text from image using OCR"""
+    try:
+        text = pytesseract.image_to_string(image)
+        return text
+    except Exception as e:
+        logging.error(f"OCR extraction error: {str(e)}")
+        return None
+
+def process_ocr_text(text):
+    """Process OCR extracted text into structured data"""
+    if not text:
+        return None
+
+    transactions = []
+    lines = text.split('\n')
+    current_transaction = None
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Try to parse as date
+        date = parse_date(line)
+        if date:
+            # Save previous transaction if exists
+            if current_transaction:
+                transactions.append(current_transaction)
+
+            # Start new transaction
+            current_transaction = {
+                'Date': date.strftime('%d %b'),
+                'Transaction Details': '',
+                'Withdrawals ($)': '',
+                'Deposits ($)': '',
+                'Balance ($)': ''
+            }
+            continue
+
+        if current_transaction:
+            # Try to extract amounts
+            amounts = [clean_amount(amt) for amt in line.split() if '$' in amt or any(c.isdigit() for c in amt)]
+
+            if amounts:
+                # Assume last amount is balance if multiple amounts found
+                if len(amounts) > 1:
+                    if not current_transaction['Balance ($)']:
+                        current_transaction['Balance ($)'] = amounts[-1]
+                    if not current_transaction['Withdrawals ($)'] and float(amounts[0]) < 0:
+                        current_transaction['Withdrawals ($)'] = abs(float(amounts[0]))
+                    elif not current_transaction['Deposits ($)'] and float(amounts[0]) > 0:
+                        current_transaction['Deposits ($)'] = amounts[0]
+                else:
+                    # Single amount - add to transaction details
+                    current_transaction['Transaction Details'] += f" {line}"
+            else:
+                # Add to transaction details if no amounts found
+                if current_transaction['Transaction Details']:
+                    current_transaction['Transaction Details'] += f" {line}"
+                else:
+                    current_transaction['Transaction Details'] = line
+
+    # Add last transaction
+    if current_transaction:
+        transactions.append(current_transaction)
+
+    return transactions
+
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
@@ -197,67 +268,68 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
-        # Configure Java options for headless mode
-        java_options = [
-            '-Djava.awt.headless=true',
-            '-Dfile.encoding=UTF8'
-        ]
+        # Try regular table extraction first
+        try:
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+            )
 
-        # Extract tables from PDF
-        logging.debug("Attempting to extract tables from PDF")
-        tables = tabula.read_pdf(
-            pdf_path,
-            pages='all',
-            multiple_tables=True,
-            guess=True,
-            lattice=False,
-            stream=True,
-            pandas_options={'header': None},
-            java_options=java_options
-        )
+            if tables:
+                all_transactions = []
+                seen_transactions = set()
 
-        if not tables:
-            logging.error("No tables extracted from PDF")
-            return None
+                for page_idx, table in enumerate(tables):
+                    if len(table.columns) >= 4:
+                        table.columns = range(len(table.columns))
+                        transactions = process_transaction_rows(table, page_idx)
 
-        logging.debug(f"Extracted {len(tables)} tables from PDF")
+                        for trans in transactions:
+                            trans_key = (
+                                trans['Date'],
+                                trans['Transaction Details'],
+                                str(trans['Withdrawals ($)']),
+                                str(trans['Deposits ($)']),
+                                str(trans['Balance ($)'])
+                            )
 
-        all_transactions = []
-        seen_transactions = set()
+                            if trans_key not in seen_transactions:
+                                seen_transactions.add(trans_key)
+                                all_transactions.append(trans)
 
-        # Process each table
-        for page_idx, table in enumerate(tables):
-            logging.debug(f"Processing table {page_idx+1}, shape: {table.shape}")
-            logging.debug(f"Table contents:\n{table}")
+                if all_transactions:
+                    logging.info("Successfully extracted transactions using table extraction")
+                    return all_transactions
 
-            if len(table.columns) >= 4:  # Ensure table has required columns
-                table.columns = range(len(table.columns))
-                transactions = process_transaction_rows(table, page_idx)
+        except Exception as e:
+            logging.warning(f"Table extraction failed, attempting OCR: {str(e)}")
 
-                # Add unique transactions
-                for trans in transactions:
-                    # Create a comprehensive transaction key
-                    trans_key = (
-                        trans['Date'],
-                        trans['Transaction Details'],
-                        str(trans['Withdrawals ($)']),
-                        str(trans['Deposits ($)']),
-                        str(trans['Balance ($)'])
-                    )
+        # If table extraction failed or no transactions found, try OCR
+        logging.info("Converting PDF to images for OCR processing")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            images = convert_from_path(pdf_path)
+            all_transactions = []
 
-                    if trans_key not in seen_transactions:
-                        seen_transactions.add(trans_key)
-                        all_transactions.append(trans)
-                        logging.debug(f"Added unique transaction: {trans}")
-                    else:
-                        logging.debug(f"Skipping duplicate transaction: {trans}")
+            for i, image in enumerate(images):
+                logging.info(f"Processing page {i+1} with OCR")
+                text = extract_text_from_image(image)
+                if text:
+                    transactions = process_ocr_text(text)
+                    if transactions:
+                        all_transactions.extend(transactions)
 
-        if not all_transactions:
-            logging.error("No transactions extracted from tables")
-            return None
-
-        logging.info(f"Successfully extracted {len(all_transactions)} unique transactions")
-        return all_transactions
+            if all_transactions:
+                logging.info(f"Successfully extracted {len(all_transactions)} transactions using OCR")
+                return all_transactions
+            else:
+                logging.error("No transactions could be extracted using either method")
+                return None
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
