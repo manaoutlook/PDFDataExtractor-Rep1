@@ -132,19 +132,13 @@ def process_transaction_rows(table):
 
             # Handle multi-line transactions
             if current_transaction:
-                if 'WAGES' in details and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
-                    # Merge WAGES transaction details
-                    current_transaction['Transaction Details'] = f"ANZ INTERNET BANKING TRANSFER {details}"
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-                elif date:
+                if date:
                     # Save current and start new transaction
-                    transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
-                    if transaction_key not in seen_transactions:
-                        seen_transactions.add(transaction_key)
-                        processed_data.append(current_transaction)
+                    if current_transaction:
+                        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
+                        if transaction_key not in seen_transactions:
+                            seen_transactions.add(transaction_key)
+                            processed_data.append(current_transaction)
                     current_transaction = {
                         'Date': date.strftime('%d %b'),
                         'Transaction Details': details.strip(),
@@ -152,6 +146,13 @@ def process_transaction_rows(table):
                         'Deposits ($)': deposit,
                         'Balance ($)': balance
                     }
+                elif 'WAGES' in details or 'CLEANING' in details:
+                    # Merge WAGES/CLEANING transaction details
+                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']} {details}"
+                    if deposit:
+                        current_transaction['Deposits ($)'] = deposit
+                    if balance:
+                        current_transaction['Balance ($)'] = balance
                 elif details:
                     # Continue current transaction
                     current_transaction['Transaction Details'] += f" {details}"
@@ -161,9 +162,6 @@ def process_transaction_rows(table):
                         current_transaction['Deposits ($)'] = deposit
                     if balance:
                         current_transaction['Balance ($)'] = balance
-                else:
-                    # Continue the existing transaction
-                    current_transaction['Transaction Details'] = details
                     if withdrawal:
                         current_transaction['Withdrawals ($)'] = withdrawal
                     if deposit:
