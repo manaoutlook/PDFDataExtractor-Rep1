@@ -61,9 +61,19 @@ def process_transaction_rows(table, page_idx):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     transaction_buffer = []
-
-    # Clean the table
+    
+    # Clean the table and ensure all values are strings
     table = table.dropna(how='all').reset_index(drop=True)
+    table = table.fillna('')
+    table = table.astype(str)
+    
+    # Pre-process to combine split rows with same date
+    for idx in range(len(table) - 1):
+        if parse_date(table.iloc[idx][0]) and parse_date(table.iloc[idx + 1][0]):
+            desc1 = str(table.iloc[idx][1]).strip()
+            desc2 = str(table.iloc[idx + 1][1]).strip()
+            if desc1 and desc2:
+                table.iloc[idx, 1] = desc1 + ' ' + desc2
 
     # Skip if table is empty or contains only headers
     if len(table) <= 1:
