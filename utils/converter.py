@@ -101,10 +101,17 @@ def process_transaction_rows(table):
                 'Deposits ($)': deposit,
                 'Balance ($)': balance
             }
-        elif current_transaction:
+        elif current_transaction and any(val.strip() for val in row_values):
             # Handle continuation lines
             details = row_values[1].strip()
-            if details:
+            
+            # Special handling for multi-line transactions with additional info
+            if details and 'WAGES' in details:
+                if current_transaction['Transaction Details']:
+                    current_transaction['Transaction Details'] += f" - {details}"
+                else:
+                    current_transaction['Transaction Details'] = details
+            elif details:
                 if current_transaction['Transaction Details']:
                     current_transaction['Transaction Details'] += f" {details}"
                 else:
