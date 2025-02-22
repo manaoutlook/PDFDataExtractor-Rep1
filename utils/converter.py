@@ -105,16 +105,28 @@ def process_transaction_rows(table):
             # Handle continuation lines
             details = row_values[1].strip()
             
-            # Handle multi-line transactions
-            if details:
-                base_details = current_transaction['Transaction Details']
-                if 'ANZ' in base_details and ('WAGES' in details or 'CLEANING' in details):
-                    # For ANZ transactions with additional details, add on new line
-                    current_transaction['Transaction Details'] = f"{base_details}\n{details}"
-                elif current_transaction['Transaction Details']:
+            # Start a new transaction if we have a date or it's a new transaction type
+            if date or (details and details.startswith('ANZ')):
+                if current_transaction:
+                    processed_data.append(current_transaction)
+                
+                current_transaction = {
+                    'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
+                    'Transaction Details': details,
+                    'Withdrawals ($)': withdrawal,
+                    'Deposits ($)': deposit,
+                    'Balance ($)': balance
+                }
+            # Handle continuation lines for existing transaction
+            elif details:
+                if current_transaction and ('WAGES' in details or 'CLEANING' in details):
+                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
+                    if deposit:
+                        current_transaction['Deposits ($)'] = deposit
+                    if balance:
+                        current_transaction['Balance ($)'] = balance
+                elif current_transaction:
                     current_transaction['Transaction Details'] += f" {details}"
-                else:
-                    current_transaction['Transaction Details'] = details
             elif details:
                 if current_transaction['Transaction Details']:
                     current_transaction['Transaction Details'] += f" {details}"
