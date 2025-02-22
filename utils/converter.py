@@ -132,23 +132,23 @@ def process_transaction_rows(table):
 
             # Start a new transaction if we have a date or specific transaction markers
             if date or (details and (details.startswith('ANZ') or details.startswith('ACCOUNT SERVICING FEE'))):
-                    # Combine the details if they're split across lines
-                    if 'WAGES' in details:
-                        current_transaction['Transaction Details'] = details
-                    else:
-                        current_transaction['Transaction Details'] += f" {details}"
-
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
+                # Combine the details if they're split across lines
+                if 'WAGES' in details:
+                    current_transaction['Transaction Details'] = details
                 else:
-                    # Create a unique key for the transaction
-                    if current_transaction:
-                        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
-                        if transaction_key not in seen_transactions:
-                            seen_transactions.add(transaction_key)
-                            processed_data.append(current_transaction)
+                    current_transaction['Transaction Details'] += f" {details}"
+
+                if balance:
+                    current_transaction['Balance ($)'] = balance
+                if deposit:
+                    current_transaction['Deposits ($)'] = deposit
+            else:
+                # Create a unique key for the transaction
+                if current_transaction:
+                    transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
+                    if transaction_key not in seen_transactions:
+                        seen_transactions.add(transaction_key)
+                        processed_data.append(current_transaction)
 
                 # Only start new if it's not a continuation
                 if not (current_transaction and current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER') and 'WAGES' in details):
