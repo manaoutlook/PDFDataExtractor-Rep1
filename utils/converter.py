@@ -54,7 +54,6 @@ def process_transaction_rows(table):
     """Process rows and handle multi-line transactions"""
     processed_data = []
     current_transaction = None
-    seen_transactions = set()
 
     # Clean the table and skip if it's a header-only table
     table = table.dropna(how='all')
@@ -77,7 +76,8 @@ def process_transaction_rows(table):
         logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
-        if any(header in str(row_values[1]).upper() for header in ['TRANSACTION DETAILS -WITHDRAWALS', 'TRANSACTION DETAILS', '-WITHDRAWALS', '-DEPOSITS', '-BALANCE']):
+        if any(header in str(row_values[1]).upper() for header in 
+               ['TRANSACTION DETAILS -WITHDRAWALS', 'TRANSACTION DETAILS', '-WITHDRAWALS', '-DEPOSITS', '-BALANCE']):
             logging.debug(f"Skipping header row: {row_values}")
             continue
 
@@ -105,111 +105,31 @@ def process_transaction_rows(table):
         deposit = clean_amount(row_values[3])
         balance = clean_amount(row_values[4]) if len(row_values) > 4 else ''
 
-        # Start a new transaction if we have a date or it's a new transaction line
-        if date or (row_values[1].strip() and not current_transaction):
+        # Start a new transaction if we have a date
+        if date:
             if current_transaction:
                 processed_data.append(current_transaction)
 
             current_transaction = {
-                'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
+                'Date': date.strftime('%d %b'),
                 'Transaction Details': row_values[1].strip(),
                 'Withdrawals ($)': withdrawal,
                 'Deposits ($)': deposit,
                 'Balance ($)': balance
             }
-        elif current_transaction and any(val.strip() for val in row_values):
+        elif current_transaction and row_values[1].strip():
             # Handle continuation lines
-            details = row_values[1].strip()
-
-            # Special handling for WAGES transactions
-            if current_transaction and 'WAGES' in details and 'ANZ INTERNET BANKING TRANSFER' in current_transaction['Transaction Details']:
-                current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']} {details}"
-                if deposit:
-                    current_transaction['Deposits ($)'] = deposit
-                if balance:
-                    current_transaction['Balance ($)'] = balance
-                continue
-
-            # Handle multi-line transactions
-            if current_transaction:
-                if date:
-                    # Save current and start new transaction
-                    if current_transaction:
-                        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
-                        if transaction_key not in seen_transactions:
-                            seen_transactions.add(transaction_key)
-                            processed_data.append(current_transaction)
-                    current_transaction = {
-                        'Date': date.strftime('%d %b'),
-                        'Transaction Details': details.strip(),
-                        'Withdrawals ($)': withdrawal,
-                        'Deposits ($)': deposit,
-                        'Balance ($)': balance
-                    }
-                elif 'WAGES' in details or 'CLEANING' in details:
-                    # Merge WAGES/CLEANING transaction details
-                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']} {details}"
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-                elif details:
-                    # Continue current transaction
-                    current_transaction['Transaction Details'] += f" {details}"
-                    if withdrawal:
-                        current_transaction['Withdrawals ($)'] = withdrawal
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-                    if withdrawal:
-                        current_transaction['Withdrawals ($)'] = withdrawal
-                    if deposit:
-                        current_transaction['Deposits ($)'] = deposit
-                    if balance:
-                        current_transaction['Balance ($)'] = balance
-            # Handle continuation lines for existing transaction
-            if current_transaction and ('WAGES' in details or 'CLEANING' in details):
-                if current_transaction['Transaction Details'].startswith('ANZ INTERNET BANKING TRANSFER'):
-                    current_transaction['Transaction Details'] += f" {details}"
-                else:
-                    current_transaction['Transaction Details'] = f"{current_transaction['Transaction Details']}\n{details}"
-                if deposit:
-                    current_transaction['Deposits ($)'] = deposit
-                if balance:
-                    current_transaction['Balance ($)'] = balance
-            elif current_transaction and details:
-                if current_transaction['Transaction Details']:
-                    current_transaction['Transaction Details'] += f" {details}"
-                else:
-                    current_transaction['Transaction Details'] = details
-
-            # Update monetary values if present
-            if withdrawal and not current_transaction['Withdrawals ($)']:
+            current_transaction['Transaction Details'] += f" {row_values[1].strip()}"
+            if withdrawal:
                 current_transaction['Withdrawals ($)'] = withdrawal
-            if deposit and not current_transaction['Deposits ($)']:
+            if deposit:
                 current_transaction['Deposits ($)'] = deposit
             if balance:
                 current_transaction['Balance ($)'] = balance
 
-            # If we have monetary values but no previous transaction details,
-            # this might be a new transaction
-            if (withdrawal or deposit) and not current_transaction['Transaction Details']:
-                if current_transaction:
-                    processed_data.append(current_transaction)
-                current_transaction = {
-                    'Date': date.strftime('%d %b') if date else (current_transaction['Date'] if current_transaction else ''),
-                    'Transaction Details': details,
-                    'Withdrawals ($)': withdrawal,
-                    'Deposits ($)': deposit,
-                    'Balance ($)': balance
-                }
-
-    # Add the last transaction if it exists and is not a duplicate
+    # Add the last transaction if it exists
     if current_transaction:
-        transaction_key = f"{current_transaction['Date']}_{current_transaction['Transaction Details']}_{current_transaction['Balance ($)']}"
-        if transaction_key not in seen_transactions:
-            processed_data.append(current_transaction)
+        processed_data.append(current_transaction)
 
     return processed_data
 
@@ -245,6 +165,7 @@ def convert_pdf_to_data(pdf_path: str):
             return None
 
         all_transactions = []
+        seen_transactions = set()
 
         # Process each table
         for idx, table in enumerate(tables):
@@ -252,14 +173,35 @@ def convert_pdf_to_data(pdf_path: str):
             if len(table.columns) >= 4:
                 table.columns = range(len(table.columns))
                 transactions = process_transaction_rows(table)
-                if transactions:
-                    all_transactions.extend(transactions)
+
+                # Add unique transactions
+                for trans in transactions:
+                    # Create a more comprehensive transaction key
+                    trans_key = (
+                        trans['Date'],
+                        trans['Transaction Details'],
+                        str(trans['Withdrawals ($)']),
+                        str(trans['Deposits ($)']),
+                        str(trans['Balance ($)'])
+                    )
+
+                    if trans_key not in seen_transactions:
+                        seen_transactions.add(trans_key)
+                        all_transactions.append(trans)
+                    else:
+                        logging.debug(f"Skipping duplicate transaction: {trans}")
 
         if not all_transactions:
             logging.error("No transactions extracted from tables")
             return None
 
-        logging.info(f"Successfully extracted {len(all_transactions)} transactions")
+        # Sort transactions by date and balance
+        all_transactions.sort(key=lambda x: (
+            datetime.strptime(x['Date'] + " 2025", '%d %b %Y') if x['Date'] else datetime.max,
+            float(x['Balance ($)'].replace(',', '')) if x['Balance ($)'] else 0
+        ))
+
+        logging.info(f"Successfully extracted {len(all_transactions)} unique transactions")
         return all_transactions
 
     except Exception as e:
