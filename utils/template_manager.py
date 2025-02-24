@@ -96,22 +96,30 @@ class TemplateManager:
                 "patterns": {
                     "header": [
                         r"ANZ\s+Bank",
+                        r"Australia\s+and\s+New\s+Zealand\s+Banking",
                         r"Statement\s+Period",
-                        r"Account\s+Summary"
+                        r"Account\s+Summary",
+                        r"Opening\s+Balance"
                     ],
                     "transaction": [
+                        # Date formats
                         r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)",
-                        r"Opening\s+Balance",
-                        r"Closing\s+Balance"
+                        r"\d{2}/\d{2}/\d{4}",
+                        r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}",
+                        # Transaction types
+                        r"(?:PAYMENT|DEPOSIT|WITHDRAWAL|ATM|EFTPOS|DIRECT CREDIT|DIRECT DEBIT|TRANSFER)",
+                        r"(?:Opening Balance|Closing Balance|Balance Brought Forward)"
                     ],
                     "footer": [
                         r"End\s+of\s+Statement",
-                        r"Page\s+\d+\s+of\s+\d+"
+                        r"Page\s+\d+\s+of\s+\d+",
+                        r"Closing\s+Balance",
+                        r"For\s+further\s+information"
                     ]
                 },
                 "layout": {
-                    "date": (0, 0.15, 0, 0.1),
-                    "description": (0.15, 0.6, 0, 0.1),
+                    "date": (0, 0.2, 0, 0.1),
+                    "description": (0.2, 0.6, 0, 0.1),
                     "amount": (0.6, 0.8, 0, 0.1),
                     "balance": (0.8, 1.0, 0, 0.1)
                 }
