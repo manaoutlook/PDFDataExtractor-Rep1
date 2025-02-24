@@ -33,14 +33,14 @@ class BankStatementTemplate:
                         score += 1
                         matches_found.append(f"Matched {field} pattern: {pattern}")
                     else:
-                        logging.debug(f"No match for {field} pattern: {pattern}")
+                        logger.debug(f"No match for {field} pattern: {pattern}")
                 except Exception as e:
                     logger.error(f"Error matching pattern {pattern}: {str(e)}")
 
         final_score = score / total_patterns if total_patterns > 0 else 0
-        logging.debug(f"Template {self.name} score: {final_score}")
+        logger.debug(f"Template {self.name} score: {final_score}")
         if matches_found:
-            logging.debug(f"Matches found for {self.name}: {', '.join(matches_found)}")
+            logger.debug(f"Matches found for {self.name}: {', '.join(matches_found)}")
         return final_score
 
 class TemplateManager:
@@ -54,6 +54,42 @@ class TemplateManager:
     def _create_default_templates(self):
         """Create default templates for common bank statements"""
         default_templates = [
+            {
+                "name": "RBS_Personal",
+                "description": "Royal Bank of Scotland Personal Account Statement",
+                "patterns": {
+                    "header": [
+                        r"Royal\s+Bank\s+of\s+Scotland",
+                        r"RBS",
+                        r"Statement\s+of\s+Account",
+                        r"Account\s+Details",
+                        r"Your\s+Account\s+Summary"
+                    ],
+                    "transaction": [
+                        # Date formats
+                        r"\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)",  # 26 APR
+                        r"\d{1,2}[A-Z]{3}\d{2}",  # 26APR23
+                        r"\d{2}[-/]\d{2}[-/]\d{2,4}",  # DD/MM/YYYY
+                        # Transaction codes and types
+                        r"(?:PAYMENT|TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)",
+                        r"(?:WITHDRAWAL|DEPOSIT|TRANSFER|STANDING ORDER|DIRECT DEBIT)"
+                    ],
+                    "footer": [
+                        r"Balance\s+(?:brought|carried)\s+forward",
+                        r"Page\s+\d+\s+of\s+\d+",
+                        r"Statement\s+period",
+                        r"Opening\s+balance",
+                        r"Closing\s+balance"
+                    ]
+                },
+                "layout": {
+                    "date": (0, 0.15, 0, 0.1),
+                    "description": (0.15, 0.6, 0, 0.1),
+                    "withdrawals": (0.6, 0.75, 0, 0.1),
+                    "deposits": (0.75, 0.9, 0, 0.1),
+                    "balance": (0.9, 1.0, 0, 0.1)
+                }
+            },
             {
                 "name": "ANZ_Personal",
                 "description": "ANZ Bank Personal Account Statement",
@@ -79,48 +115,10 @@ class TemplateManager:
                     "amount": (0.6, 0.8, 0, 0.1),
                     "balance": (0.8, 1.0, 0, 0.1)
                 }
-            },
-            {
-                "name": "RBS_Personal",
-                "description": "Royal Bank of Scotland Personal Account Statement",
-                "patterns": {
-                    "header": [
-                        r"Royal\s+Bank\s+of\s+Scotland",
-                        r"RBS",
-                        r"Statement\s+of\s+Account",
-                        r"Account\s+Details",
-                        r"Your\s+Account\s+Summary"
-                    ],
-                    "transaction": [
-                        # Enhanced date patterns for RBS
-                        r"\d{1,2}(?:st|nd|rd|th)?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*",
-                        r"\d{1,2}[A-Z]{3}\d{2}",  # e.g., 26APR23
-                        # Transaction codes and types
-                        r"(?:PAYMENT|TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)",
-                        r"(?:WITHDRAWAL|DEPOSIT|TRANSFER|STANDING ORDER|DIRECT DEBIT)",
-                        # Date formats
-                        r"\d{2}[-/]\d{2}[-/]\d{2,4}"
-                    ],
-                    "footer": [
-                        r"Balance\s+(?:brought|carried)\s+forward",
-                        r"Page\s+\d+\s+of\s+\d+",
-                        r"Statement\s+period",
-                        r"Opening\s+balance",
-                        r"Closing\s+balance"
-                    ]
-                },
-                "layout": {
-                    "date": (0, 0.15, 0, 0.1),
-                    "description": (0.15, 0.6, 0, 0.1),
-                    "withdrawals": (0.6, 0.75, 0, 0.1),
-                    "deposits": (0.75, 0.9, 0, 0.1),
-                    "balance": (0.9, 1.0, 0, 0.1)
-                }
             }
         ]
 
         for template_data in default_templates:
-            # Check if template already exists
             template = BankTemplate.query.filter_by(name=template_data['name']).first()
             if not template:
                 template = BankTemplate(
@@ -134,6 +132,7 @@ class TemplateManager:
 
         try:
             db.session.commit()
+            logger.info("Default templates created successfully")
         except Exception as e:
             logger.error(f"Error creating default templates: {str(e)}")
             db.session.rollback()
@@ -143,6 +142,7 @@ class TemplateManager:
         try:
             # Ensure default templates exist
             if BankTemplate.query.count() == 0:
+                logger.info("No templates found in database, creating defaults...")
                 self._create_default_templates()
 
             # Load all templates
@@ -154,7 +154,9 @@ class TemplateManager:
                     layout=json.loads(db_template.layout)
                 )
                 self.templates.append(template)
-                logger.debug(f"Loaded template: {template.name}")
+                logger.info(f"Loaded template: {template.name}")
+
+            logger.info(f"Successfully loaded {len(self.templates)} templates")
 
         except Exception as e:
             logger.error(f"Error loading templates: {str(e)}")
@@ -166,43 +168,30 @@ class TemplateManager:
         best_score = 0
         best_template = None
 
-        logging.debug("Starting template matching process")
-        logging.debug(f"Text sample: {text[:200]}...")  # Log first 200 chars of text
+        logger.info("Starting template matching process")
+        logger.debug(f"Text sample: {text[:200]}...")  # Log first 200 chars of text
 
         # Get all templates from database
         db_templates = BankTemplate.query.all()
 
         for template in self.templates:
-            logging.debug(f"Checking template: {template.name}")
+            logger.info(f"Checking template: {template.name}")
             score = template.match_score(text)
-            logging.debug(f"Template {template.name} scored: {score}")
+            logger.info(f"Template {template.name} scored: {score}")
 
             if score > best_score:
                 best_score = score
                 best_template = template
-                logging.debug(f"New best template: {template.name} with score {score}")
+                logger.info(f"New best template: {template.name} with score {score}")
 
-            # Store similarity score in database
-            try:
-                for other_template in db_templates:
-                    if other_template.name != template.name:
-                        similarity = TemplateSimilarity(
-                            template_id=BankTemplate.query.filter_by(name=template.name).first().id,
-                            similar_template_id=other_template.id,
-                            similarity_score=score
-                        )
-                        db.session.add(similarity)
-                db.session.commit()
-            except Exception as e:
-                logger.error(f"Error storing similarity score: {str(e)}")
-                db.session.rollback()
-
-        # Require at least 30% match to consider it valid
-        if best_score >= 0.3:
-            logging.info(f"Selected template {best_template.name} with score {best_score}")
+        # Log the final decision
+        if best_template and best_score >= 0.3:
+            logger.info(f"Selected template {best_template.name} with score {best_score}")
+            logger.debug(f"Selected template patterns: {best_template.patterns}")
+            logger.debug(f"Selected template layout: {best_template.layout}")
             return best_template
         else:
-            logging.warning(f"No template matched well enough. Best score was {best_score}")
+            logger.warning(f"No template matched well enough. Best score was {best_score}")
             return None
 
     def get_template(self, name: str) -> Optional[BankStatementTemplate]:

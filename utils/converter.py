@@ -271,7 +271,7 @@ def convert_pdf_to_data(pdf_path: str):
             for page_num, page in enumerate(pdf_reader.pages):
                 page_text = page.extract_text()
                 text_content += page_text
-                logger.debug(f"Page {page_num + 1} text sample: {page_text[:200]}")
+                logger.info(f"Page {page_num + 1} text sample: {page_text[:200]}")
 
         logger.info("Text content sample for template matching:")
         logger.info(text_content[:500])
@@ -283,35 +283,36 @@ def convert_pdf_to_data(pdf_path: str):
             logger.debug(f"Template patterns: {template.patterns}")
             logger.debug(f"Template layout: {template.layout}")
         else:
-            logger.warning("No matching template found")
+            logger.warning("No matching template found, will use default extraction")
 
         # Configure tabula options based on template
-        extraction_params = {
-            'pages': 'all',
-            'multiple_tables': True,
-            'guess': False,
-            'pandas_options': {'header': None},
-            'java_options': ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-        }
-
         if template and template.name == 'RBS_Personal':
             logger.info("Using RBS-specific extraction parameters")
-            extraction_params.update({
-                'area': [200, 50, 750, 550],  # Adjusted coordinates for RBS
-                'lattice': False,
-                'stream': True,
-                'relative_area': False
-            })
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=False,
+                lattice=False,
+                stream=True,
+                columns=[70, 250, 350, 450, 550],  # Explicit column positions for RBS
+                area=[150, 50, 750, 550],  # Adjusted table area
+                relative_area=False,
+                pandas_options={'header': None},
+                java_options=['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+            )
         else:
             logger.info("Using default extraction parameters")
-            extraction_params.update({
-                'lattice': False,
-                'stream': True
-            })
-
-        # Extract tables from PDF
-        logger.info("Starting table extraction with tabula...")
-        tables = tabula.read_pdf(pdf_path, **extraction_params)
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=False,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+            )
 
         if not tables:
             logger.error("No tables extracted from PDF")
@@ -332,8 +333,6 @@ def convert_pdf_to_data(pdf_path: str):
                 continue
 
             table.columns = range(len(table.columns))
-
-            # Clean and prepare table
             table = table.dropna(how='all').reset_index(drop=True)
             table = table.fillna('')
 
@@ -349,20 +348,28 @@ def convert_pdf_to_data(pdf_path: str):
                     r'Statement from',
                     r'Statement to',
                     r'Page',
-                    r'Account'
+                    r'Account',
+                    r'Sort Code'
                 ]
+
+                logger.debug("Original table rows before filtering:")
+                for idx, row in table.iterrows():
+                    logger.debug(f"Row {idx}: {row.values}")
 
                 before_rows = len(table)
                 table = table[~table[0].astype(str).str.contains('|'.join(skip_patterns), case=False, na=False)]
                 after_rows = len(table)
                 logger.info(f"Removed {before_rows - after_rows} header/footer rows")
 
+                logger.debug("Remaining rows after filtering:")
+                for idx, row in table.iterrows():
+                    logger.debug(f"Row {idx}: {row.values}")
+
             logger.info("Processing table rows...")
             page_transactions = process_transaction_rows(table, page_idx, template)
 
             if page_transactions:
                 logger.info(f"Found {len(page_transactions)} transactions on page {page_idx + 1}")
-                # Add unique transactions
                 for trans in page_transactions:
                     trans_key = (
                         trans['Date'],
