@@ -189,7 +189,7 @@ def process_transaction_rows(table, page_idx):
 
     return processed_data
 
-def convert_pdf_to_data(pdf_path: str):
+def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
         logging.info(f"Starting data extraction from {pdf_path}")
@@ -199,7 +199,7 @@ def convert_pdf_to_data(pdf_path: str):
             return None
 
         # Detect if PDF is image-based
-        is_image_pdf = is_image_based_pdf(pdf_path)
+        is_image_pdf = is_image_based_pdf(pdf_path, force_text_based)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
         if is_image_pdf:

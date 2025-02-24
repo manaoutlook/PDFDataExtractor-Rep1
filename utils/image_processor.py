@@ -12,12 +12,19 @@ from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG)
 
-def is_image_based_pdf(pdf_path: str) -> bool:
+def is_image_based_pdf(pdf_path: str, force_text_based: bool = False) -> bool:
     """
     Determine if a PDF is image-based by comparing text extraction methods.
     Returns True if the PDF is primarily image-based, False if it's text-based.
+
+    Parameters:
+    - force_text_based: If True, always returns False to force text-based processing
     """
     try:
+        if force_text_based:
+            logging.info("Forcing text-based processing")
+            return False
+
         logging.debug(f"Checking if PDF is image-based: {pdf_path}")
 
         # First try direct text extraction

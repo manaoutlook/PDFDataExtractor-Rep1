@@ -120,6 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
     previewBtn.addEventListener('click', async () => {
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
+        formData.append('force_text_based', 'true');  // Force text-based processing
 
         previewBtn.disabled = true;
         progressBar.classList.remove('d-none');

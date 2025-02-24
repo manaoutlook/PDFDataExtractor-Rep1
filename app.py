@@ -36,6 +36,8 @@ def preview_data():
         return jsonify({'error': 'No file part'}), 400
 
     file = request.files['file']
+    force_text_based = request.form.get('force_text_based', 'false').lower() == 'true'
+
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
@@ -49,7 +51,7 @@ def preview_data():
             file.save(pdf_path)
 
             logging.debug(f"Starting preview of {pdf_path}")
-            data = convert_pdf_to_data(pdf_path)
+            data = convert_pdf_to_data(pdf_path, force_text_based=force_text_based)
 
             if not data:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
