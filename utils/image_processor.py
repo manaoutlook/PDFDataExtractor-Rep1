@@ -69,6 +69,7 @@ def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
         header_columns = {}
         header_texts = []
 
+        # First pass to identify header positions
         for i in range(len(header_data['text'])):
             text = header_data['text'][i].upper().strip()
             if text:
@@ -89,6 +90,12 @@ def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
 
         logging.debug(f"Found header texts: {header_texts}")
         logging.debug(f"Detected header columns: {header_columns}")
+
+        # If balance column not found, use last section of the image
+        if 'balance' not in header_columns and header_columns:
+            last_col_end = max(col[1] for col in header_columns.values())
+            header_columns['balance'] = (last_col_end, image.width)
+            logging.debug("Added balance column based on last position")
 
         if not header_columns:
             logging.warning("Header detection failed, using default column positions")
@@ -276,8 +283,14 @@ def is_date(text: str) -> bool:
 
 def is_amount(text: str) -> bool:
     """Check if text matches amount patterns"""
-    amount_pattern = r'^[\$]?\s*-?\d+(?:,\d{3})*(?:\.\d{2})?$'
-    return bool(re.match(amount_pattern, text.strip()))
+    # More flexible amount pattern matching
+    amount_patterns = [
+        r'^[\$]?\s*-?\d+(?:,\d{3})*(?:\.\d{2})?$',  # Standard format
+        r'^[\$]?\s*\(?\d+(?:,\d{3})*(?:\.\d{2})?\)?$',  # Parentheses format
+        r'^[\$]?\s*\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:CR|DR)?$'  # With CR/DR suffix
+    ]
+    text = text.strip()
+    return any(re.match(pattern, text) for pattern in amount_patterns)
 
 def clean_amount(amount_str: str) -> str:
     """Clean and format amount strings"""
@@ -285,16 +298,28 @@ def clean_amount(amount_str: str) -> str:
         if not amount_str:
             return ''
         # Remove currency symbols and cleanup
-        amount_str = str(amount_str).replace('$', '').replace(',', '').strip()
-        # Handle brackets for negative numbers
+        amount_str = str(amount_str).replace('$', '').strip()
+
+        # Handle CR/DR suffix
+        is_credit = 'CR' in amount_str.upper()
+        amount_str = amount_str.upper().replace('CR', '').replace('DR', '').strip()
+
+        # Remove commas
+        amount_str = amount_str.replace(',', '')
+
+        # Handle bracketed negative numbers
         if '(' in amount_str and ')' in amount_str:
             amount_str = '-' + amount_str.replace('(', '').replace(')', '')
+
+        # Convert to float to validate and format
         try:
-            # Try to convert to float to validate
-            float(amount_str)
-            return amount_str
+            amount = float(amount_str)
+            if not is_credit and amount > 0:  # DR amounts should be negative
+                amount = -amount
+            return f"{amount:.2f}"
         except ValueError:
             return ''
+
     except Exception:
         return ''
 
