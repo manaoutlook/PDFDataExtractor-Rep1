@@ -5,8 +5,6 @@ from flask import render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from app import app
 from utils.converter import convert_pdf, convert_pdf_to_data
-import tabula
-import PyPDF2
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -17,67 +15,6 @@ def allowed_file(filename):
 @app.route('/')
 def index():
     return render_template('index.html')
-
-@app.route('/test_pdf', methods=['POST'])
-def test_pdf():
-    """Test endpoint to analyze PDF structure"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    if not allowed_file(file.filename):
-        return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
-
-    try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
-            file.save(pdf_path)
-
-            # Extract text content
-            with open(pdf_path, 'rb') as pdf_file:
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                text_content = []
-                for page in pdf_reader.pages:
-                    text_content.append(page.extract_text())
-
-            # Extract tables using tabula
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=False,
-                lattice=False,
-                stream=True,
-                columns=[70, 250, 350, 450, 550],
-                area=[150, 50, 750, 550],
-                relative_area=False,
-                pandas_options={'header': None}
-            )
-
-            # Convert tables to list format for JSON serialization
-            table_data = []
-            for i, table in enumerate(tables):
-                table_data.append({
-                    'page': i + 1,
-                    'shape': table.shape,
-                    'columns': list(table.columns),
-                    'rows': table.values.tolist()
-                })
-
-            return jsonify({
-                'filename': file.filename,
-                'num_pages': len(pdf_reader.pages),
-                'text_content': text_content,
-                'tables_found': len(tables),
-                'table_data': table_data
-            })
-
-    except Exception as e:
-        logger.error(f"Error in PDF analysis: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/preview', methods=['POST'])
 def preview_data():
@@ -92,68 +29,22 @@ def preview_data():
         return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
 
     try:
+        # Create temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
-            # First extract and log the raw PDF text
-            with open(pdf_path, 'rb') as pdf_file:
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                raw_text = []
-                for page_num, page in enumerate(pdf_reader.pages):
-                    page_text = page.extract_text()
-                    raw_text.append(page_text)
-                    logger.info(f"Page {page_num + 1} raw text sample: {page_text[:200]}")
-
-            # Try to extract tables first
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=False,
-                lattice=False,
-                stream=True,
-                columns=[70, 250, 350, 450, 550],
-                area=[150, 50, 750, 550],
-                relative_area=False,
-                pandas_options={'header': None}
-            )
-
-            logger.info(f"Number of tables extracted: {len(tables)}")
-            for idx, table in enumerate(tables):
-                logger.info(f"Table {idx + 1} shape: {table.shape}")
-                logger.info(f"Table {idx + 1} sample rows:\n{table.head()}")
-
-            # Now try to convert to structured data
-            logger.info("Attempting to extract structured data...")
+            logger.debug(f"Starting preview of {pdf_path}")
             data = convert_pdf_to_data(pdf_path)
 
             if not data:
-                logger.error("Failed to extract transactions")
-                # Return diagnostic information instead of error
-                return jsonify({
-                    'error': 'No transactions could be extracted from the PDF',
-                    'diagnostic_info': {
-                        'num_pages': len(pdf_reader.pages),
-                        'raw_text': raw_text,
-                        'num_tables': len(tables),
-                        'table_info': [
-                            {
-                                'shape': t.shape,
-                                'sample': t.head().to_dict('records')
-                            } for t in tables
-                        ]
-                    }
-                }), 200  # Return 200 to show the diagnostic info
+                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
 
             return jsonify({'data': data})
 
     except Exception as e:
-        logger.error(f"Error during preview: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': 'An error occurred during preview',
-            'details': str(e)
-        }), 500
+        logger.error(f"Error during preview: {str(e)}")
+        return jsonify({'error': 'An error occurred during preview'}), 500
 
 @app.route('/download', methods=['POST'])
 def download_file():
