@@ -8,6 +8,9 @@ from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 import re
 import PyPDF2
+from datetime import datetime
+import tabula
+import pandas as pd
 
 def is_image_based_pdf(pdf_path: str) -> bool:
     """
@@ -67,161 +70,165 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         logging.error(f"Error in image preprocessing: {str(e)}")
         return image
 
-def identify_table_columns(ocr_data) -> Dict[str, range]:
-    """
-    Identify column positions based on headers and content alignment.
-    """
+def parse_date(date_str):
+    """Parse date string from bank statement format"""
     try:
-        # Expected column headers and their variations
-        header_patterns = {
-            'date': r'(?:Date|DATE)',
-            'details': r'(?:Transaction Details|TRANSACTION DETAILS|Description|DESCRIPTION)',
-            'withdrawals': r'(?:Withdrawals|WITHDRAWALS|Debit|DEBIT)\s*\(?(?:\$|AUD)?\)?',
-            'deposits': r'(?:Deposits|DEPOSITS|Credit|CREDIT)\s*\(?(?:\$|AUD)?\)?',
-            'balance': r'(?:Balance|BALANCE)\s*\(?(?:\$|AUD)?\)?'
+        if not date_str or pd.isna(date_str):
+            return None
+
+        date_str = str(date_str).strip().upper()
+
+        # Skip rows that aren't dates
+        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
+            return None
+
+        # Handle day and month format (e.g., "26 APR")
+        parts = date_str.split()
+        if len(parts) == 2:
+            try:
+                day = int(parts[0])
+                month = parts[1][:3]  # Take first 3 chars of month
+                current_year = datetime.now().year
+                # Handle special case for dates like "31 APR"
+                if month == 'APR' and day == 31:
+                    day = 30
+                date_str = f"{day:02d} {month} {current_year}"
+                parsed_date = datetime.strptime(date_str, '%d %b %Y')
+                return parsed_date.strftime('%d %b')
+            except (ValueError, IndexError) as e:
+                logging.debug(f"Date parse error: {e} for {date_str}")
+                return None
+
+        return None
+    except Exception as e:
+        logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
+        return None
+
+def process_transaction_rows(table, page_idx):
+    """Process rows and handle multi-line transactions"""
+    processed_data = []
+    current_buffer = []
+
+    # Clean the table
+    table = table.dropna(how='all').reset_index(drop=True)
+
+    logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
+    logging.debug(f"Table columns: {table.columns}")
+    logging.debug(f"First few rows: {table.head()}")
+
+    def process_buffer():
+        if not current_buffer:
+            return None
+
+        logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
+
+        # Get date from first row
+        date = parse_date(current_buffer[0][0])
+        if not date:
+            logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
+            return None
+
+        # Initialize transaction
+        transaction = {
+            'Date': date,
+            'Transaction Details': '',
+            'Withdrawals ($)': '',
+            'Deposits ($)': '',
+            'Balance ($)': '',
+            '_page_idx': page_idx,
+            '_row_idx': int(current_buffer[0][-1])
         }
 
-        # Find header positions
-        column_ranges = {}
-        header_positions = []
+        # Process all rows
+        details = []
+        for row in current_buffer:
+            # Add description
+            if row[1].strip():
+                details.append(row[1].strip())
+                logging.debug(f"Added description: {row[1].strip()}")
 
-        # Combine all text in the first few lines to find headers
-        first_lines = []
-        current_line = -1
-        for i in range(len(ocr_data['text'])):
-            if ocr_data['line_num'][i] != current_line:
-                if len(first_lines) >= 3:  # Only check first 3 lines
-                    break
-                current_line = ocr_data['line_num'][i]
-                first_lines.append([])
-            first_lines[-1].append({
-                'text': ocr_data['text'][i],
-                'left': ocr_data['left'][i],
-                'width': ocr_data['width'][i]
-            })
+            # Process amounts with detailed logging
+            withdrawal = clean_amount(row[2])
+            deposit = clean_amount(row[3])
+            balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-        # Search for headers in the first few lines
-        for line in first_lines:
-            line_text = ' '.join(word['text'] for word in line)
-            for col_name, pattern in header_patterns.items():
-                match = re.search(pattern, line_text, re.IGNORECASE)
-                if match:
-                    # Find the word containing the header
-                    for word in line:
-                        if re.search(pattern, word['text'], re.IGNORECASE):
-                            header_positions.append({
-                                'name': col_name,
-                                'left': word['left'],
-                                'right': word['left'] + word['width']
-                            })
+            logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
 
-        # Sort headers by position
-        header_positions.sort(key=lambda x: x['left'])
+            # Update amounts if not already set
+            if withdrawal and not transaction['Withdrawals ($)']:
+                transaction['Withdrawals ($)'] = withdrawal
+                logging.debug(f"Set withdrawal: {withdrawal}")
+            if deposit and not transaction['Deposits ($)']:
+                transaction['Deposits ($)'] = deposit
+                logging.debug(f"Set deposit: {deposit}")
+            if balance and not transaction['Balance ($)']:
+                transaction['Balance ($)'] = balance
+                logging.debug(f"Set balance: {balance}")
 
-        # Create column ranges
-        for i, header in enumerate(header_positions):
-            if i < len(header_positions) - 1:
-                column_ranges[header['name']] = range(
-                    header['left'],
-                    header_positions[i + 1]['left']
-                )
-            else:
-                column_ranges[header['name']] = range(
-                    header['left'],
-                    header['left'] + 500  # Assume last column extends
-                )
+        # Join details
+        transaction['Transaction Details'] = '\n'.join(filter(None, details))
+        logging.debug(f"Final transaction: {transaction}")
+        return transaction
 
-        return column_ranges
+    # Process each row
+    for idx, row in table.iterrows():
+        # Clean row values and add index
+        row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
+        row_values.append(idx)
 
-    except Exception as e:
-        logging.error(f"Error identifying table columns: {str(e)}")
-        return {}
+        logging.debug(f"Processing row {idx}: {row_values}")
 
-def extract_table_structure(image: Image.Image) -> List[Dict]:
-    """
-    Extract table structure from image using OCR and post-processing.
-    """
-    try:
-        # Preprocess image
-        processed_image = preprocess_image(image)
+        # Skip header rows
+        if any(header in row_values[1].upper() for header in [
+            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
+            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
+        ]):
+            logging.debug(f"Skipping header row: {row_values}")
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
+            continue
 
-        # Get detailed OCR data including bounding boxes
-        ocr_data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT)
+        # Check for date and content
+        has_date = bool(parse_date(row_values[0]))
+        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
 
-        # Identify column positions
-        column_ranges = identify_table_columns(ocr_data)
-        if not column_ranges:
-            logging.error("Failed to identify table columns")
-            return []
+        logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
-        # Extract lines with confidence above threshold
-        lines = []
-        current_line = {
-            'date': [],
-            'details': [],
-            'withdrawals': [],
-            'deposits': [],
-            'balance': []
-        }
-        current_line_number = -1
+        if has_date:
+            # Process previous buffer if exists
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
 
-        for i in range(len(ocr_data['text'])):
-            text = ocr_data['text'][i].strip()
-            conf = int(ocr_data['conf'][i])
-            line_num = ocr_data['line_num'][i]
-            left_pos = ocr_data['left'][i]
+            # Start new buffer
+            current_buffer = [row_values]
+            logging.debug(f"Started new transaction: {row_values}")
 
-            if conf > 60 and text:  # Filter low-confidence results
-                # Determine which column this text belongs to
-                for col_name, col_range in column_ranges.items():
-                    if left_pos in col_range:
-                        if line_num != current_line_number:
-                            if any(col for col in current_line.values()):
-                                lines.append(current_line)
-                            current_line = {
-                                'date': [],
-                                'details': [],
-                                'withdrawals': [],
-                                'deposits': [],
-                                'balance': []
-                            }
-                            current_line_number = line_num
-                        current_line[col_name].append(text)
-                        break
+        elif current_buffer and has_content:
+            # Add to current buffer
+            current_buffer.append(row_values)
+            logging.debug(f"Added to current transaction: {row_values}")
 
-        # Add last line if not empty
-        if any(col for col in current_line.values()):
-            lines.append(current_line)
+    # Process final buffer
+    if current_buffer:
+        trans = process_buffer()
+        if trans:
+            processed_data.append(trans)
 
-        # Process lines into transactions
-        transactions = []
-        for line in lines:
-            # Join column texts
-            date = ' '.join(line['date'])
-            details = ' '.join(line['details'])
-            withdrawals = ' '.join(line['withdrawals'])
-            deposits = ' '.join(line['deposits'])
-            balance = ' '.join(line['balance'])
+    # Sort by page and row index
+    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
 
-            # Clean and format the data
-            clean_date = parse_date(date)
-            if clean_date:
-                transaction = {
-                    'Date': clean_date,
-                    'Transaction Details': details.strip(),
-                    'Withdrawals ($)': clean_amount(withdrawals),
-                    'Deposits ($)': clean_amount(deposits),
-                    'Balance ($)': clean_amount(balance)
-                }
-                if is_valid_transaction(transaction):
-                    transactions.append(transaction)
-                    logging.debug(f"Extracted transaction: {transaction}")
+    # Remove tracking fields
+    for trans in processed_data:
+        trans.pop('_page_idx', None)
+        trans.pop('_row_idx', None)
 
-        return transactions
-
-    except Exception as e:
-        logging.error(f"Error extracting table structure: {str(e)}")
-        return []
+    return processed_data
 
 def clean_amount(amount_str: str) -> str:
     """Clean and format amount strings"""
@@ -235,32 +242,6 @@ def clean_amount(amount_str: str) -> str:
             amount_str = amount_str[1:]
             return f"-{amount_str}"
         return amount_str
-    except Exception:
-        return ''
-
-def parse_date(date_str: str) -> str:
-    """Parse date string from bank statement format"""
-    try:
-        if not date_str:
-            return ''
-
-        # Remove any unwanted text
-        date_str = re.sub(r'(?i)(opening|balance|closing|total|date)', '', date_str).strip()
-
-        # Match date patterns
-        patterns = [
-            r'(\d{1,2})[-/\s]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)',
-            r'(\d{1,2})[-/\s]+(January|February|March|April|May|June|July|August|September|October|November|December)',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, date_str, re.IGNORECASE)
-            if match:
-                day = match.group(1)
-                month = match.group(2)[:3].title()
-                return f"{int(day):02d} {month}"
-
-        return ''
     except Exception:
         return ''
 
@@ -303,22 +284,51 @@ def process_image_based_pdf(pdf_path: str) -> List[Dict]:
     try:
         logging.info(f"Processing image-based PDF: {pdf_path}")
 
-        # Convert PDF pages to images
-        images = convert_from_path(pdf_path)
+        # Convert PDF pages to images with higher DPI for better quality
+        images = convert_from_path(pdf_path, dpi=300)
 
         all_transactions = []
         for page_num, image in enumerate(images, 1):
             logging.debug(f"Processing page {page_num}")
 
-            # Extract table structure from image
-            transactions = extract_table_structure(image)
+            # Process the page using tabula-py since it's better at table structure detection
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
+                # Save the current page as a temporary PDF
+                image.save(temp_pdf.name, 'PDF')
 
-            if transactions:
-                all_transactions.extend(transactions)
-                logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
-            else:
-                logging.warning(f"No transactions found on page {page_num}")
+                # Extract table from the temporary PDF
+                tables = tabula.read_pdf(
+                    temp_pdf.name,
+                    pages=1,
+                    multiple_tables=False,
+                    guess=True,
+                    lattice=False,
+                    stream=True,
+                    pandas_options={'header': None}
+                )
 
+                if tables:
+                    # Process each table using the existing transaction processing logic
+                    for table in tables:
+                        if len(table.columns) >= 4:
+                            table.columns = range(len(table.columns))
+                            page_transactions = process_transaction_rows(table, page_num)
+                            if page_transactions:
+                                all_transactions.extend(page_transactions)
+                                logging.debug(f"Extracted {len(page_transactions)} transactions from page {page_num}")
+                            else:
+                                logging.warning(f"No valid transactions found in table on page {page_num}")
+                else:
+                    logging.warning(f"No tables found on page {page_num}")
+
+                # Clean up temporary file
+                os.unlink(temp_pdf.name)
+
+        if not all_transactions:
+            logging.error("No transactions could be extracted from any page")
+            return []
+
+        logging.info(f"Successfully extracted {len(all_transactions)} transactions total")
         return all_transactions
 
     except Exception as e:
