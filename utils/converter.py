@@ -227,39 +227,6 @@ def process_transaction_rows(table, page_idx, template=None):
         logging.error(f"Error processing transactions: {str(e)}")
         return []
 
-def test_rbs_extraction(table, page_idx=0):
-    """Test function for debugging RBS statement extraction"""
-    logging.info("Starting RBS extraction test")
-    logging.info(f"Input table shape: {table.shape}")
-    logging.info(f"Table columns: {table.columns}")
-    logging.info("\nFirst few rows of input:")
-    for idx, row in table.head().iterrows():
-        logging.info(f"Row {idx}: {row.values}")
-
-    # Clean and prepare table
-    table = table.dropna(how='all').reset_index(drop=True)
-
-    # Test date parsing
-    for idx, row in table.iterrows():
-        date_str = str(row[0]).strip()
-        parsed_date = parse_date(date_str)
-        logging.info(f"\nTesting date: '{date_str}'")
-        logging.info(f"Parsed date: {parsed_date}")
-
-        # Test RBS pattern cleaning
-        if len(row) > 1:
-            desc = str(row[1]).strip()
-            logging.info(f"Original description: '{desc}'")
-            # Test RBS transaction code removal
-            cleaned_desc = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', '', desc).strip()
-            logging.info(f"After removing transaction codes: '{cleaned_desc}'")
-            # Test reference number removal
-            final_desc = re.sub(r'\b\d{6,}\b', '', cleaned_desc).strip()
-            logging.info(f"After removing reference numbers: '{final_desc}'")
-
-    # Now try full row processing
-    return process_transaction_rows(table, page_idx, template=template_manager.get_template('RBS_Personal'))
-
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
@@ -268,6 +235,10 @@ def convert_pdf_to_data(pdf_path: str):
         if not os.path.exists(pdf_path):
             logging.error("PDF file not found")
             return None
+
+        # Detect if PDF is image-based
+        is_image_pdf = is_image_based_pdf(pdf_path)
+        logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
         # Extract raw text for template matching
         with open(pdf_path, 'rb') as file:
@@ -283,62 +254,70 @@ def convert_pdf_to_data(pdf_path: str):
             logging.debug(f"Template patterns: {template.patterns}")
             logging.debug(f"Template layout: {template.layout}")
 
-            # Configure tabula options based on template
-            area = None
-            if template.name == 'RBS_Personal':
-                # Focus on the transaction area for RBS statements
-                area = [10, 0, 100, 100]  # relative coordinates
-                logging.info("Using RBS-specific extraction area")
+        if is_image_pdf:
+            # Process image-based PDF
+            transactions = process_image_based_pdf(pdf_path, template)
+        else:
+            # Configure Java options for headless mode
+            java_options = [
+                '-Djava.awt.headless=true',
+                '-Dfile.encoding=UTF8'
+            ]
 
-        # Extract tables from PDF
-        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-        tables = tabula.read_pdf(
-            pdf_path,
-            pages='all',
-            multiple_tables=True,
-            guess=False,
-            lattice=False,
-            stream=True,
-            area=area,
-            relative_area=True if area else False,
-            pandas_options={'header': None},
-            java_options=java_options
-        )
+            # Extract tables from PDF with RBS-specific settings
+            logging.debug("Attempting to extract tables from PDF")
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=False,  # Disable guessing for more precise control
+                lattice=False,
+                stream=True,
+                area=[10, 0, 100, 100],  # Focus on the main content area
+                relative_area=True,  # Use relative coordinates
+                pandas_options={'header': None},
+                java_options=java_options
+            )
 
-        if not tables:
-            logging.error("No tables extracted from PDF")
-            return None
+            if not tables:
+                logging.error("No tables extracted from PDF")
+                return None
 
-        logging.info(f"Extracted {len(tables)} tables")
-        transactions = []
-        seen_transactions = set()
+            logging.debug(f"Extracted {len(tables)} tables from PDF")
+            for idx, table in enumerate(tables):
+                logging.debug(f"Table {idx} shape: {table.shape}")
+                logging.debug(f"Table {idx} columns: {table.columns}")
+                logging.debug(f"Table {idx} first few rows:\n{table.head()}")
 
-        for page_idx, table in enumerate(tables):
-            if len(table.columns) >= 4:
-                table.columns = range(len(table.columns))
+            transactions = []
+            seen_transactions = set()
 
-                # For RBS statements, use the test function first
-                if template and template.name == 'RBS_Personal':
-                    logging.info(f"\nTesting RBS extraction for page {page_idx + 1}")
-                    page_transactions = test_rbs_extraction(table, page_idx)
+            # Process each table with template guidance if available
+            for page_idx, table in enumerate(tables):
+                if len(table.columns) >= 4:  # Ensure table has required columns
+                    table.columns = range(len(table.columns))
+                    if template:
+                        # Apply template-specific processing
+                        page_transactions = process_transaction_rows(table, page_idx, template)
+                    else:
+                        # Fall back to default processing
+                        page_transactions = process_transaction_rows(table, page_idx)
+
+                    # Add unique transactions
+                    for trans in page_transactions:
+                        trans_key = (
+                            trans['Date'],
+                            trans['Transaction Details'],
+                            str(trans['Withdrawals ($)']),
+                            str(trans['Deposits ($)']),
+                            str(trans['Balance ($)'])
+                        )
+
+                        if trans_key not in seen_transactions:
+                            seen_transactions.add(trans_key)
+                            transactions.append(trans)
                 else:
-                    page_transactions = process_transaction_rows(table, page_idx, template)
-
-                # Add unique transactions
-                for trans in page_transactions:
-                    trans_key = (
-                        trans['Date'],
-                        trans['Transaction Details'],
-                        str(trans['Withdrawals ($)']),
-                        str(trans['Deposits ($)']),
-                        str(trans['Balance ($)'])
-                    )
-                    if trans_key not in seen_transactions:
-                        seen_transactions.add(trans_key)
-                        transactions.append(trans)
-                        logging.debug(f"Added transaction: {trans}")
-            else:
-                logging.warning(f"Table on page {page_idx + 1} has insufficient columns: {len(table.columns)}")
+                    logging.warning(f"Table on page {page_idx + 1} has insufficient columns: {len(table.columns)}")
 
         if not transactions:
             logging.error("No transactions extracted")
