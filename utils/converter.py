@@ -11,6 +11,10 @@ from .template_manager import TemplateManager
 import PyPDF2
 import re
 
+# Set up detailed logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 # Add template manager to the module scope
 template_manager = TemplateManager()
 
@@ -103,20 +107,20 @@ def process_transaction_rows(table, page_idx, template=None):
         # Clean the table
         table = table.dropna(how='all').reset_index(drop=True)
 
-        logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
-        logging.debug(f"Table columns: {table.columns}")
-        logging.debug(f"First few rows: {table.head()}")
+        logger.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
+        logger.debug(f"Table columns: {table.columns}")
+        logger.debug(f"First few rows: {table.head()}")
 
         def process_buffer():
             if not current_buffer:
                 return None
 
-            logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
+            logger.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
 
             # Get date from first row
             date = parse_date(current_buffer[0][0])
             if not date:
-                logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
+                logger.debug(f"Failed to parse date from: {current_buffer[0][0]}")
                 return None
 
             # Initialize transaction
@@ -154,22 +158,22 @@ def process_transaction_rows(table, page_idx, template=None):
                 deposit = clean_amount(row[3]) if len(row) > 3 else ''
                 balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-                logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
+                logger.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
 
                 # Update amounts if not already set
                 if withdrawal and not transaction['Withdrawals ($)']:
                     transaction['Withdrawals ($)'] = withdrawal
-                    logging.debug(f"Set withdrawal: {withdrawal}")
+                    logger.debug(f"Set withdrawal: {withdrawal}")
                 if deposit and not transaction['Deposits ($)']:
                     transaction['Deposits ($)'] = deposit
-                    logging.debug(f"Set deposit: {deposit}")
+                    logger.debug(f"Set deposit: {deposit}")
                 if balance and not transaction['Balance ($)']:
                     transaction['Balance ($)'] = balance
-                    logging.debug(f"Set balance: {balance}")
+                    logger.debug(f"Set balance: {balance}")
 
             # Join details
             transaction['Transaction Details'] = ' '.join(filter(None, details))
-            logging.debug(f"Final transaction: {transaction}")
+            logger.debug(f"Final transaction: {transaction}")
             return transaction
 
         # Process each row
@@ -177,13 +181,13 @@ def process_transaction_rows(table, page_idx, template=None):
             # Clean row values
             row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
 
-            logging.debug(f"Processing row {idx}: {row_values}")
+            logger.debug(f"Processing row {idx}: {row_values}")
 
             # Check for date and content
             has_date = bool(parse_date(row_values[0]))
             has_content = any(val.strip() for val in row_values[1:5])
 
-            logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
+            logger.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
             if has_date:
                 # Process previous buffer if exists
@@ -191,40 +195,40 @@ def process_transaction_rows(table, page_idx, template=None):
                     trans = process_buffer()
                     if trans:
                         processed_data.append(trans)
-                        logging.debug(f"Added transaction from buffer: {trans}")
+                        logger.debug(f"Added transaction from buffer: {trans}")
                     current_buffer = []
 
                 # Start new buffer
                 current_buffer = [row_values]
-                logging.debug(f"Started new transaction: {row_values}")
+                logger.debug(f"Started new transaction: {row_values}")
 
             elif has_content and current_buffer:
                 # Add to current buffer
                 current_buffer.append(row_values)
-                logging.debug(f"Added to current transaction: {row_values}")
+                logger.debug(f"Added to current transaction: {row_values}")
 
         # Process final buffer
         if current_buffer:
             trans = process_buffer()
             if trans:
                 processed_data.append(trans)
-                logging.debug(f"Added final transaction: {trans}")
+                logger.debug(f"Added final transaction: {trans}")
 
-        logging.info(f"Successfully processed {len(processed_data)} transactions")
+        logger.info(f"Successfully processed {len(processed_data)} transactions")
         return processed_data
 
     except Exception as e:
-        logging.error(f"Error processing transactions: {str(e)}")
+        logger.error(f"Error processing transactions: {str(e)}")
         return []
 
 def test_rbs_extraction(table, page_idx=0):
     """Test function for debugging RBS statement extraction"""
-    logging.info("Starting RBS extraction test")
-    logging.info(f"Input table shape: {table.shape}")
-    logging.info(f"Table columns: {table.columns}")
-    logging.info("\nFirst few rows of input:")
+    logger.info("Starting RBS extraction test")
+    logger.info(f"Input table shape: {table.shape}")
+    logger.info(f"Table columns: {table.columns}")
+    logger.info("\nFirst few rows of input:")
     for idx, row in table.head().iterrows():
-        logging.info(f"Row {idx}: {row.values}")
+        logger.info(f"Row {idx}: {row.values}")
 
     # Clean and prepare table
     table = table.dropna(how='all').reset_index(drop=True)
@@ -233,19 +237,19 @@ def test_rbs_extraction(table, page_idx=0):
     for idx, row in table.iterrows():
         date_str = str(row[0]).strip()
         parsed_date = parse_date(date_str)
-        logging.info(f"\nTesting date: '{date_str}'")
-        logging.info(f"Parsed date: {parsed_date}")
+        logger.info(f"\nTesting date: '{date_str}'")
+        logger.info(f"Parsed date: {parsed_date}")
 
         # Test RBS pattern cleaning
         if len(row) > 1:
             desc = str(row[1]).strip()
-            logging.info(f"Original description: '{desc}'")
+            logger.info(f"Original description: '{desc}'")
             # Test RBS transaction code removal
             cleaned_desc = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', '', desc).strip()
-            logging.info(f"After removing transaction codes: '{cleaned_desc}'")
+            logger.info(f"After removing transaction codes: '{cleaned_desc}'")
             # Test reference number removal
             final_desc = re.sub(r'\b\d{6,}\b', '', cleaned_desc).strip()
-            logging.info(f"After removing reference numbers: '{final_desc}'")
+            logger.info(f"After removing reference numbers: '{final_desc}'")
 
     # Now try full row processing
     return process_transaction_rows(table, page_idx, template=template_manager.get_template('RBS_Personal'))
@@ -253,103 +257,111 @@ def test_rbs_extraction(table, page_idx=0):
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
-        logging.info(f"Starting data extraction from {pdf_path}")
+        logger.info(f"Starting data extraction from {pdf_path}")
 
         if not os.path.exists(pdf_path):
-            logging.error("PDF file not found")
+            logger.error("PDF file not found")
             return None
 
         # Extract raw text for template matching
+        logger.info("Extracting text content for template matching...")
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             text_content = ''
-            for page in pdf_reader.pages:
-                text_content += page.extract_text()
+            for page_num, page in enumerate(pdf_reader.pages):
+                page_text = page.extract_text()
+                text_content += page_text
+                logger.debug(f"Page {page_num + 1} text sample: {page_text[:200]}")
 
-            logging.info("Extracted text content sample:")
-            logging.info(text_content[:500])  # Log first 500 chars for debugging
+        logger.info("Text content sample for template matching:")
+        logger.info(text_content[:500])
 
         # Find matching template
         template = template_manager.find_matching_template(text_content)
         if template:
-            logging.info(f"Found matching template: {template.name}")
-            logging.debug(f"Template patterns: {template.patterns}")
-            logging.debug(f"Template layout: {template.layout}")
+            logger.info(f"Found matching template: {template.name}")
+            logger.debug(f"Template patterns: {template.patterns}")
+            logger.debug(f"Template layout: {template.layout}")
+        else:
+            logger.warning("No matching template found")
 
-            # Configure tabula options based on template
-            area = None
-            if template.name == 'RBS_Personal':
-                # RBS-specific extraction area - focusing on transaction table area
-                area = [200, 50, 750, 550]  # Adjust these coordinates based on RBS statement layout
-                lattice = False
-                stream = True
-                logging.info("Using RBS-specific extraction parameters")
-            else:
-                # Default extraction parameters
-                area = None
-                lattice = False
-                stream = True
+        # Configure tabula options based on template
+        extraction_params = {
+            'pages': 'all',
+            'multiple_tables': True,
+            'guess': False,
+            'pandas_options': {'header': None},
+            'java_options': ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+        }
+
+        if template and template.name == 'RBS_Personal':
+            logger.info("Using RBS-specific extraction parameters")
+            extraction_params.update({
+                'area': [200, 50, 750, 550],  # Adjusted coordinates for RBS
+                'lattice': False,
+                'stream': True,
+                'relative_area': False
+            })
+        else:
+            logger.info("Using default extraction parameters")
+            extraction_params.update({
+                'lattice': False,
+                'stream': True
+            })
 
         # Extract tables from PDF
-        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-        logging.info("Starting table extraction with tabula")
-        tables = tabula.read_pdf(
-            pdf_path,
-            pages='all',
-            multiple_tables=True,
-            guess=False,
-            lattice=lattice,
-            stream=stream,
-            area=area,
-            relative_area=False,
-            pandas_options={'header': None},
-            java_options=java_options
-        )
+        logger.info("Starting table extraction with tabula...")
+        tables = tabula.read_pdf(pdf_path, **extraction_params)
 
         if not tables:
-            logging.error("No tables extracted from PDF")
+            logger.error("No tables extracted from PDF")
             return None
 
-        logging.info(f"Extracted {len(tables)} tables")
+        logger.info(f"Extracted {len(tables)} tables")
         transactions = []
         seen_transactions = set()
 
         for page_idx, table in enumerate(tables):
-            logging.info(f"\nProcessing table on page {page_idx + 1}")
-            logging.info(f"Table shape: {table.shape}")
-            logging.info(f"Table columns: {table.columns}")
-            logging.info(f"First few rows:\n{table.head()}")
+            logger.info(f"\nProcessing table on page {page_idx + 1}")
+            logger.info(f"Table shape: {table.shape}")
+            logger.info(f"Table columns: {table.columns}")
+            logger.info(f"First few rows:\n{table.head()}")
 
-            if len(table.columns) >= 4:
-                table.columns = range(len(table.columns))
+            if len(table.columns) < 4:
+                logger.warning(f"Table on page {page_idx + 1} has insufficient columns: {len(table.columns)}")
+                continue
 
-                # For RBS statements, use specialized processing
-                if template and template.name == 'RBS_Personal':
-                    # Clean table data
-                    table = table.dropna(how='all').reset_index(drop=True)
-                    table = table.fillna('')
+            table.columns = range(len(table.columns))
 
-                    # Skip header rows
-                    skip_patterns = [
-                        r'Date',
-                        r'Balance',
-                        r'Type',
-                        r'Details',
-                        r'Paid out',
-                        r'Paid in',
-                        r'Statement from',
-                        r'Statement to',
-                        r'Page',
-                        r'Account'
-                    ]
+            # Clean and prepare table
+            table = table.dropna(how='all').reset_index(drop=True)
+            table = table.fillna('')
 
-                    table = table[~table[0].astype(str).str.contains('|'.join(skip_patterns), case=False, na=False)]
+            # Skip header rows for RBS
+            if template and template.name == 'RBS_Personal':
+                skip_patterns = [
+                    r'Date',
+                    r'Balance',
+                    r'Type',
+                    r'Details',
+                    r'Paid out',
+                    r'Paid in',
+                    r'Statement from',
+                    r'Statement to',
+                    r'Page',
+                    r'Account'
+                ]
 
-                    logging.info("Processing RBS table with specialized handling")
-                    page_transactions = process_transaction_rows(table, page_idx, template)
-                else:
-                    page_transactions = process_transaction_rows(table, page_idx, template)
+                before_rows = len(table)
+                table = table[~table[0].astype(str).str.contains('|'.join(skip_patterns), case=False, na=False)]
+                after_rows = len(table)
+                logger.info(f"Removed {before_rows - after_rows} header/footer rows")
 
+            logger.info("Processing table rows...")
+            page_transactions = process_transaction_rows(table, page_idx, template)
+
+            if page_transactions:
+                logger.info(f"Found {len(page_transactions)} transactions on page {page_idx + 1}")
                 # Add unique transactions
                 for trans in page_transactions:
                     trans_key = (
@@ -362,20 +374,20 @@ def convert_pdf_to_data(pdf_path: str):
                     if trans_key not in seen_transactions:
                         seen_transactions.add(trans_key)
                         transactions.append(trans)
-                        logging.debug(f"Added transaction: {trans}")
+                        logger.debug(f"Added transaction: {trans}")
             else:
-                logging.warning(f"Table on page {page_idx + 1} has insufficient columns: {len(table.columns)}")
+                logger.warning(f"No valid transactions found on page {page_idx + 1}")
 
         if not transactions:
-            logging.error("No transactions extracted")
+            logger.error("No transactions extracted from any page")
             return None
 
-        logging.info(f"Successfully extracted {len(transactions)} transactions")
+        logger.info(f"Successfully extracted {len(transactions)} transactions")
         return transactions
 
     except Exception as e:
-        logging.error(f"Error in data extraction: {str(e)}")
-        logging.exception("Stack trace:")
+        logger.error(f"Error in data extraction: {str(e)}")
+        logger.exception("Stack trace:")
         return None
 
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
@@ -424,9 +436,9 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
             output_path = f"{temp_file.name}.csv"
             df.to_csv(output_path, index=False)
 
-        logging.info(f"Successfully created output file: {output_path}")
+        logger.info(f"Successfully created output file: {output_path}")
         return output_path
 
     except Exception as e:
-        logging.error(f"Error in conversion: {str(e)}")
+        logger.error(f"Error in conversion: {str(e)}")
         return None
