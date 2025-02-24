@@ -1,6 +1,8 @@
 import os
 import logging
 from flask import Flask, render_template, request, jsonify, send_file
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase
 from werkzeug.utils import secure_filename
 from utils.converter import convert_pdf, convert_pdf_to_data
 import tempfile
@@ -8,8 +10,20 @@ import tempfile
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(model_class=Base)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET")
+
+# Database Configuration
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_recycle": 300,
+    "pool_pre_ping": True,
+}
+db.init_app(app)
 
 # Configuration
 ALLOWED_EXTENSIONS = {'pdf'}
@@ -90,6 +104,16 @@ def download_file():
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 16MB'}), 413
+
+# Initialize database tables
+with app.app_context():
+    try:
+        logging.info("Initializing database...")
+        import models  # noqa: F401
+        db.create_all()
+        logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error(f"Error initializing database: {str(e)}")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
