@@ -39,27 +39,46 @@ def parse_date(date_str):
         date_str = str(date_str).strip().upper()
 
         # Skip rows that aren't dates
-        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
+        if any(word in date_str.upper() for word in ['TOTALS', 'BALANCE', 'OPENING', 'CLOSING', 'BROUGHT', 'CARRIED']):
             return None
 
-        # Handle day and month format (e.g., "26 APR")
-        parts = date_str.split()
-        if len(parts) == 2:
-            try:
-                day = int(parts[0])
-                month = parts[1][:3]  # Take first 3 chars of month
-                current_year = datetime.now().year
-                # Handle special case for dates like "31 APR"
-                if month == 'APR' and day == 31:
-                    day = 30
-                date_str = f"{day:02d} {month} {current_year}"
-                parsed_date = datetime.strptime(date_str, '%d %b %Y')
-                return parsed_date
-            except (ValueError, IndexError) as e:
-                logging.debug(f"Date parse error: {e} for {date_str}")
-                return None
+        # Handle different date formats
+        date_patterns = [
+            # "26 APR" format
+            (r'(\d{1,2})\s*([A-Za-z]{3})', '%d %b %Y'),
+            # "26/04/2023" format
+            (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', '%d/%m/%Y'),
+            # "2023-04-26" format
+            (r'(\d{4})-(\d{1,2})-(\d{1,2})', '%Y-%m-%d')
+        ]
+
+        for pattern, date_format in date_patterns:
+            match = re.match(pattern, date_str)
+            if match:
+                try:
+                    if len(match.groups()) == 2:  # Day-Month format
+                        day = int(match.group(1))
+                        month = match.group(2)
+                        current_year = datetime.now().year
+                        date_str = f"{day:02d} {month} {current_year}"
+                        return datetime.strptime(date_str, '%d %b %Y')
+                    else:  # Full date format
+                        if '/' in date_str or '-' in date_str:
+                            # Normalize separators
+                            normalized_date = re.sub(r'[/-]', '/', date_str)
+                            parts = normalized_date.split('/')
+
+                            # Handle 2-digit year
+                            if len(parts[2]) == 2:
+                                parts[2] = '20' + parts[2]
+
+                            return datetime.strptime('/'.join(parts), date_format)
+                except (ValueError, IndexError) as e:
+                    logging.debug(f"Date parse error: {e} for {date_str}")
+                    continue
 
         return None
+
     except Exception as e:
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
@@ -146,10 +165,12 @@ def process_transaction_rows(table, page_idx, template=None):
 
         logging.debug(f"Processing row {idx}: {row_values}")
 
-        # Skip header rows
+        # Skip header rows with more specific patterns
         if any(header in row_values[1].upper() for header in [
             'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
+            'DESCRIPTION', 'DATE', 'TYPE', 'AMOUNT',
+            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD',
+            'BROUGHT FORWARD', 'CARRIED FORWARD'
         ]):
             logging.debug(f"Skipping header row: {row_values}")
             if current_buffer:
@@ -195,11 +216,6 @@ def process_transaction_rows(table, page_idx, template=None):
     for trans in processed_data:
         trans.pop('_page_idx', None)
         trans.pop('_row_idx', None)
-
-    # Log results
-    logging.debug(f"Processed {len(processed_data)} transactions")
-    for idx, trans in enumerate(processed_data):
-        logging.debug(f"Transaction {idx}: {trans}")
 
     return processed_data
 
