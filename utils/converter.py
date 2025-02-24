@@ -125,22 +125,23 @@ def process_transaction_rows(table, page_idx, template=None):
                 'Transaction Details': '',
                 'Withdrawals ($)': '',
                 'Deposits ($)': '',
-                'Balance ($)': '',
-                '_page_idx': page_idx,
-                '_row_idx': int(current_buffer[0][-1])
+                'Balance ($)': ''
             }
 
-            # Process all rows with template guidance if available
+            # Process all rows
             details = []
             for row in current_buffer:
+                # Process description with template-specific cleaning
                 if template and template.name == 'RBS_Personal':
-                    # Special handling for RBS format
                     if row[1].strip():
                         # Clean description based on RBS patterns
                         cleaned_text = row[1].strip()
-                        cleaned_text = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', ' ', cleaned_text).strip()
-                        cleaned_text = re.sub(r'\b\d{6,}\b', '', cleaned_text).strip()
-                        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()  # Normalize spaces
+                        # Remove transaction codes
+                        cleaned_text = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', ' ', cleaned_text)
+                        # Remove reference numbers
+                        cleaned_text = re.sub(r'\b\d{6,}\b', '', cleaned_text)
+                        # Remove multiple spaces
+                        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
                         if cleaned_text:
                             details.append(cleaned_text)
                 else:
@@ -173,26 +174,10 @@ def process_transaction_rows(table, page_idx, template=None):
 
         # Process each row
         for idx, row in table.iterrows():
-            # Clean row values and add index
+            # Clean row values
             row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
-            row_values.append(idx)
 
             logging.debug(f"Processing row {idx}: {row_values}")
-
-            # Skip header rows with RBS-specific patterns
-            if any(header in row_values[1].upper() for header in [
-                'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-                'DESCRIPTION', 'DATE', 'TYPE', 'AMOUNT',
-                'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD',
-                'BROUGHT FORWARD', 'CARRIED FORWARD', 'STATEMENT FROM', 'STATEMENT TO'
-            ]):
-                logging.debug(f"Skipping header row: {row_values}")
-                if current_buffer:
-                    trans = process_buffer()
-                    if trans:
-                        processed_data.append(trans)
-                    current_buffer = []
-                continue
 
             # Check for date and content
             has_date = bool(parse_date(row_values[0]))
@@ -213,7 +198,7 @@ def process_transaction_rows(table, page_idx, template=None):
                 current_buffer = [row_values]
                 logging.debug(f"Started new transaction: {row_values}")
 
-            elif current_buffer and has_content:
+            elif has_content and current_buffer:
                 # Add to current buffer
                 current_buffer.append(row_values)
                 logging.debug(f"Added to current transaction: {row_values}")
@@ -224,14 +209,6 @@ def process_transaction_rows(table, page_idx, template=None):
             if trans:
                 processed_data.append(trans)
                 logging.debug(f"Added final transaction: {trans}")
-
-        # Sort by page and row index
-        processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
-
-        # Remove tracking fields
-        for trans in processed_data:
-            trans.pop('_page_idx', None)
-            trans.pop('_row_idx', None)
 
         logging.info(f"Successfully processed {len(processed_data)} transactions")
         return processed_data
@@ -302,9 +279,16 @@ def convert_pdf_to_data(pdf_path: str):
             # Configure tabula options based on template
             area = None
             if template.name == 'RBS_Personal':
-                # Focus on the transaction area for RBS statements
-                area = [10, 0, 100, 100]  # relative coordinates
-                logging.info("Using RBS-specific extraction area")
+                # RBS-specific extraction area - focusing on transaction table area
+                area = [200, 50, 750, 550]  # Adjust these coordinates based on RBS statement layout
+                lattice = False
+                stream = True
+                logging.info("Using RBS-specific extraction parameters")
+            else:
+                # Default extraction parameters
+                area = None
+                lattice = False
+                stream = True
 
         # Extract tables from PDF
         java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
@@ -314,10 +298,10 @@ def convert_pdf_to_data(pdf_path: str):
             pages='all',
             multiple_tables=True,
             guess=False,
-            lattice=False,
-            stream=True,
+            lattice=lattice,
+            stream=stream,
             area=area,
-            relative_area=True if area else False,
+            relative_area=False,
             pandas_options={'header': None},
             java_options=java_options
         )
@@ -339,10 +323,30 @@ def convert_pdf_to_data(pdf_path: str):
             if len(table.columns) >= 4:
                 table.columns = range(len(table.columns))
 
-                # For RBS statements, use the test function first
+                # For RBS statements, use specialized processing
                 if template and template.name == 'RBS_Personal':
-                    logging.info(f"\nTesting RBS extraction for page {page_idx + 1}")
-                    page_transactions = test_rbs_extraction(table, page_idx)
+                    # Clean table data
+                    table = table.dropna(how='all').reset_index(drop=True)
+                    table = table.fillna('')
+
+                    # Skip header rows
+                    skip_patterns = [
+                        r'Date',
+                        r'Balance',
+                        r'Type',
+                        r'Details',
+                        r'Paid out',
+                        r'Paid in',
+                        r'Statement from',
+                        r'Statement to',
+                        r'Page',
+                        r'Account'
+                    ]
+
+                    table = table[~table[0].astype(str).str.contains('|'.join(skip_patterns), case=False, na=False)]
+
+                    logging.info("Processing RBS table with specialized handling")
+                    page_transactions = process_transaction_rows(table, page_idx, template)
                 else:
                     page_transactions = process_transaction_rows(table, page_idx, template)
 
