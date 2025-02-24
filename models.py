@@ -13,7 +13,7 @@ class User(UserMixin, db.Model):
 class BankTemplate(db.Model):
     __tablename__ = 'bank_template'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
+    name = db.Column(db.String(100), unique=True, nullable=False)
     description = db.Column(db.String(500))
     patterns = db.Column(db.Text, nullable=False)  # JSON string of patterns
     layout = db.Column(db.Text, nullable=False)    # JSON string of layout

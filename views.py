@@ -1,16 +1,16 @@
+import os
+import logging
+import tempfile
 from flask import render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from app import app
 from utils.converter import convert_pdf, convert_pdf_to_data
-import tempfile
-import logging
 
-# Configuration
-ALLOWED_EXTENSIONS = {'pdf'}
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
+# Configure logging
+logger = logging.getLogger(__name__)
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'pdf'}
 
 @app.route('/')
 def index():
@@ -34,7 +34,7 @@ def preview_data():
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
-            logging.debug(f"Starting preview of {pdf_path}")
+            logger.debug(f"Starting preview of {pdf_path}")
             data = convert_pdf_to_data(pdf_path)
 
             if not data:
@@ -43,7 +43,7 @@ def preview_data():
             return jsonify({'data': data})
 
     except Exception as e:
-        logging.error(f"Error during preview: {str(e)}")
+        logger.error(f"Error during preview: {str(e)}")
         return jsonify({'error': 'An error occurred during preview'}), 500
 
 @app.route('/download', methods=['POST'])
@@ -60,14 +60,14 @@ def download_file():
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
-            logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
+            logger.debug(f"Starting conversion of {pdf_path} to {output_format}")
             output_file = convert_pdf(pdf_path, output_format)
 
             if not output_file:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
 
             if not os.path.exists(output_file):
-                logging.error(f"Output file not found at {output_file}")
+                logger.error(f"Output file not found at {output_file}")
                 return jsonify({'error': 'Output file generation failed'}), 500
 
             extension = 'xlsx' if output_format == 'excel' else 'csv'
@@ -78,7 +78,7 @@ def download_file():
             )
 
     except Exception as e:
-        logging.error(f"Error during conversion: {str(e)}")
+        logger.error(f"Error during conversion: {str(e)}")
         return jsonify({'error': 'An error occurred during conversion'}), 500
 
 @app.errorhandler(413)
