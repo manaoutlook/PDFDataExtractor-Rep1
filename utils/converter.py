@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
-from .image_processor import is_image_based_pdf, process_image_based_pdf, process_mixed_content_pdf
+from .image_processor import is_image_based_pdf, process_image_based_pdf
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -198,27 +198,23 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
-        # Detect if PDF is image-based and get page types
-        is_image_pdf, page_types = is_image_based_pdf(pdf_path)
+        # Detect if PDF is image-based
+        is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
-        logging.debug(f"Page types: {page_types}")
 
-        # Check if PDF has mixed content
-        has_mixed_content = len(set(page_types)) > 1
-        if has_mixed_content:
-            logging.info("Processing mixed-content PDF")
-            return process_mixed_content_pdf(pdf_path, page_types)
-        elif is_image_pdf:
-            logging.info("Processing image-based PDF")
-            return process_image_based_pdf(pdf_path)
+        if is_image_pdf:
+            # Process image-based PDF
+            transactions = process_image_based_pdf(pdf_path)
         else:
-            logging.info("Processing text-based PDF")
             # Process text-based PDF using existing logic
+            # Configure Java options for headless mode
             java_options = [
                 '-Djava.awt.headless=true',
                 '-Dfile.encoding=UTF8'
             ]
 
+            # Extract tables from PDF
+            logging.debug("Attempting to extract tables from PDF")
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
@@ -233,6 +229,8 @@ def convert_pdf_to_data(pdf_path: str):
             if not tables:
                 logging.error("No tables extracted from PDF")
                 return None
+
+            logging.debug(f"Extracted {len(tables)} tables from PDF")
 
             transactions = []
             seen_transactions = set()
@@ -257,12 +255,12 @@ def convert_pdf_to_data(pdf_path: str):
                             seen_transactions.add(trans_key)
                             transactions.append(trans)
 
-            if not transactions:
-                logging.error("No transactions extracted")
-                return None
+        if not transactions:
+            logging.error("No transactions extracted")
+            return None
 
-            logging.info(f"Successfully extracted {len(transactions)} transactions")
-            return transactions
+        logging.info(f"Successfully extracted {len(transactions)} transactions")
+        return transactions
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")

@@ -9,84 +9,46 @@ import numpy as np
 import re
 import PyPDF2
 from datetime import datetime
-import tabula
 
 logging.basicConfig(level=logging.DEBUG)
 
-def analyze_page_content(page_reader, page_image) -> str:
+def is_image_based_pdf(pdf_path: str) -> bool:
     """
-    Analyze a single page to determine if it's text-based, image-based, or mixed.
-    Returns: 'text', 'image', or 'mixed'
-    """
-    try:
-        # Extract text directly from PDF
-        direct_text = page_reader.extract_text()
-        direct_text_len = len(direct_text.strip())
-        logging.debug(f"Direct text extraction length: {direct_text_len}")
-
-        # Try OCR on the page image
-        ocr_text = pytesseract.image_to_string(page_image)
-        ocr_text_len = len(ocr_text.strip())
-        logging.debug(f"OCR text extraction length: {ocr_text_len}")
-
-        # Determine page type based on text lengths
-        if direct_text_len > 100 and ocr_text_len > 100:
-            # If both methods get substantial text, it's likely mixed
-            if abs(direct_text_len - ocr_text_len) > 100:
-                logging.info("Page appears to be mixed content")
-                return 'mixed'
-            else:
-                logging.info("Page appears to be text-based")
-                return 'text'
-        elif direct_text_len > 100:
-            logging.info("Page appears to be text-based")
-            return 'text'
-        elif ocr_text_len > 100:
-            logging.info("Page appears to be image-based")
-            return 'image'
-        else:
-            logging.warning("Page content type unclear, defaulting to image-based")
-            return 'image'
-
-    except Exception as e:
-        logging.error(f"Error analyzing page content: {str(e)}")
-        return 'image'  # Default to image-based processing if analysis fails
-
-def is_image_based_pdf(pdf_path: str) -> Tuple[bool, List[str]]:
-    """
-    Analyze PDF to determine if it's image-based and return page types.
-    Returns: (is_primarily_image_based, list_of_page_types)
+    Determine if a PDF is image-based by comparing text extraction methods.
+    Returns True if the PDF is primarily image-based, False if it's text-based.
     """
     try:
-        logging.debug(f"Analyzing PDF content types: {pdf_path}")
+        logging.debug(f"Checking if PDF is image-based: {pdf_path}")
 
-        # Open PDF for direct text extraction
+        # First try direct text extraction
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-            # Convert PDF to images
-            images = convert_from_path(pdf_path)
+            direct_text = ''
+            for page in pdf_reader.pages[:2]:  # Check first two pages
+                direct_text += page.extract_text()
 
-            page_types = []
-            image_pages = 0
+            logging.debug(f"Direct text extraction length: {len(direct_text.strip())}")
 
-            # Analyze each page
-            for page_num, image in enumerate(images):
-                page_reader = pdf_reader.pages[page_num]
-                page_type = analyze_page_content(page_reader, image)
-                page_types.append(page_type)
-                if page_type in ['image', 'mixed']:
-                    image_pages += 1
+        # Try OCR on first page
+        images = convert_from_path(pdf_path, first_page=1, last_page=1)
+        if not images:
+            return False
 
-            # Determine if PDF is primarily image-based
-            is_primarily_image = image_pages >= len(images) / 2
-            logging.info(f"PDF analysis - Total pages: {len(images)}, Image/Mixed pages: {image_pages}")
-            logging.info(f"Page types: {page_types}")
+        # Get text from image using OCR
+        ocr_text = pytesseract.image_to_string(images[0])
+        logging.debug(f"OCR text extraction length: {len(ocr_text.strip())}")
 
-            return is_primarily_image, page_types
+        # If OCR gets text but direct extraction doesn't, it's image-based
+        if len(ocr_text.strip()) > 100 and len(direct_text.strip()) < 100:
+            logging.info("PDF appears to be image-based (OCR successful, direct extraction failed)")
+            return True
+
+        logging.info("PDF appears to be text-based")
+        return False
 
     except Exception as e:
-        logging.error(f"Error analyzing PDF: {str(e)}")
-        return True, ['image']  # Default to image-based if analysis fails
+        logging.error(f"Error detecting PDF type: {str(e)}")
+        return False
 
 def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
     """
@@ -424,83 +386,3 @@ def process_image_based_pdf(pdf_path: str) -> List[Dict]:
     except Exception as e:
         logging.error(f"Error processing image-based PDF: {str(e)}")
         return []
-
-def process_mixed_content_pdf(pdf_path: str, page_types: List[str]) -> List[Dict]:
-    """
-    Process a PDF with mixed content types, handling each page appropriately.
-    """
-    try:
-        logging.info(f"Processing mixed-content PDF: {pdf_path}")
-        all_transactions = []
-
-        # Open PDF file
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            images = convert_from_path(pdf_path)
-
-            # Process each page according to its type
-            for page_num, (page_type, image) in enumerate(zip(page_types, images)):
-                logging.debug(f"Processing page {page_num + 1} as {page_type}")
-                page_transactions = []
-
-                if page_type == 'text':
-                    # Use tabula for text-based extraction
-                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
-                        # Create single-page PDF
-                        writer = PyPDF2.PdfWriter()
-                        writer.add_page(pdf_reader.pages[page_num])
-                        writer.write(temp_pdf)
-                        temp_pdf.close()
-
-                        # Extract using tabula
-                        tables = tabula.read_pdf(
-                            temp_pdf.name,
-                            pages=1,
-                            multiple_tables=False,
-                            guess=True,
-                            lattice=False,
-                            stream=True,
-                            pandas_options={'header': None}
-                        )
-
-                        if tables:
-                            for table in tables:
-                                if len(table.columns) >= 4:
-                                    table.columns = range(len(table.columns))
-                                    page_transactions.extend(process_transaction_rows(table, page_num))
-
-                        os.unlink(temp_pdf.name)
-
-                else:  # 'image' or 'mixed'
-                    # Use OCR-based extraction
-                    page_transactions = extract_table_data(image)
-
-                if page_transactions:
-                    all_transactions.extend(page_transactions)
-                    logging.debug(f"Extracted {len(page_transactions)} transactions from page {page_num + 1}")
-                else:
-                    logging.warning(f"No transactions found on page {page_num + 1}")
-
-        if not all_transactions:
-            logging.error("No transactions could be extracted from PDF")
-            return []
-
-        logging.info(f"Successfully extracted {len(all_transactions)} total transactions")
-        return all_transactions
-
-    except Exception as e:
-        logging.error(f"Error processing mixed-content PDF: {str(e)}")
-        return []
-
-def process_transaction_rows(table, page_num):
-    transactions = []
-    for index, row in table.iterrows():
-        transaction = {
-            'Date': str(row[0]),
-            'Transaction Details': str(row[1]),
-            'Withdrawals ($)': str(row[2]),
-            'Deposits ($)': str(row[3]),
-            'Balance ($)': str(row[4]) if len(row) > 4 else ''
-        }
-        transactions.append(transaction)
-    return transactions
