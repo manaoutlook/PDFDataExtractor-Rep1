@@ -16,3 +16,6 @@ pdf2image
 Pillow
 pytesseract
 trafilatura
+trafilatura
+beautifulsoup4
+requests
