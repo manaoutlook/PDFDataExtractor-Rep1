@@ -36,6 +36,28 @@ def parse_date(date_str):
         if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
             return None
 
+        # Handle various date formats
+        date_formats = [
+            '%d %b %Y',    # 25 Dec 2024
+            '%d-%m-%Y',    # 25-12-2024
+            '%d/%m/%Y',    # 25/12/2024
+            '%d %b',       # 25 Dec
+            '%d-%m',       # 25-12
+            '%d/%m'        # 25/12 
+        ]
+
+        # First try exact date formats
+        for fmt in date_formats:
+            try:
+                # For formats without year, add current year
+                if '%Y' not in fmt:
+                    current_year = datetime.now().year
+                    date_str = f"{date_str} {current_year}"
+                    fmt = f"{fmt} %Y"
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+
         # Handle day and month format (e.g., "26 APR")
         parts = date_str.split()
         if len(parts) == 2:
@@ -43,12 +65,8 @@ def parse_date(date_str):
                 day = int(parts[0])
                 month = parts[1][:3]  # Take first 3 chars of month
                 current_year = datetime.now().year
-                # Handle special case for dates like "31 APR"
-                if month == 'APR' and day == 31:
-                    day = 30
                 date_str = f"{day:02d} {month} {current_year}"
-                parsed_date = datetime.strptime(date_str, '%d %b %Y')
-                return parsed_date
+                return datetime.strptime(date_str, '%d %b %Y')
             except (ValueError, IndexError) as e:
                 logging.debug(f"Date parse error: {e} for {date_str}")
                 return None
@@ -59,7 +77,7 @@ def parse_date(date_str):
         return None
 
 def process_transaction_rows(table, page_idx):
-    """Process rows and handle multi-line transactions"""
+    """Process rows and handle multi-line transactions with enhanced detection"""
     processed_data = []
     current_buffer = []
 
@@ -124,6 +142,13 @@ def process_transaction_rows(table, page_idx):
         logging.debug(f"Final transaction: {transaction}")
         return transaction
 
+    # Skip known header patterns
+    header_patterns = [
+        'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
+        'OPENING', 'TOTALS', 'DATE', 'DESCRIPTION', 'DEBIT', 'CREDIT',
+        'AMOUNT', 'RUNNING BALANCE', 'PARTICULARS'
+    ]
+
     # Process each row
     for idx, row in table.iterrows():
         # Clean row values and add index
@@ -133,10 +158,7 @@ def process_transaction_rows(table, page_idx):
         logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
-        if any(header in row_values[1].upper() for header in [
-            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
-        ]):
+        if any(pattern in row_values[1].upper() for pattern in header_patterns):
             logging.debug(f"Skipping header row: {row_values}")
             if current_buffer:
                 trans = process_buffer()
@@ -213,18 +235,31 @@ def convert_pdf_to_data(pdf_path: str):
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF
-            logging.debug("Attempting to extract tables from PDF")
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=True,
-                lattice=False,
-                stream=True,
-                pandas_options={'header': None},
-                java_options=java_options
-            )
+            # Extract tables from PDF with multiple attempts
+            tables = []
+            table_extraction_methods = [
+                {'lattice': True, 'stream': False},   # Try lattice mode first
+                {'lattice': False, 'stream': True},   # Then stream mode
+                {'lattice': True, 'stream': True}     # Finally both
+            ]
+
+            for method in table_extraction_methods:
+                if not tables:
+                    try:
+                        tables = tabula.read_pdf(
+                            pdf_path,
+                            pages='all',
+                            multiple_tables=True,
+                            guess=True,
+                            pandas_options={'header': None},
+                            java_options=java_options,
+                            **method
+                        )
+                        if tables:
+                            logging.info(f"Successfully extracted tables using method: {method}")
+                            break
+                    except Exception as e:
+                        logging.warning(f"Table extraction failed with method {method}: {str(e)}")
 
             if not tables:
                 logging.error("No tables extracted from PDF")

@@ -52,64 +52,106 @@ def is_image_based_pdf(pdf_path: str) -> bool:
 
 def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
     """
-    Detect table header row and determine column positions
+    Detect table header row and determine column positions with enhanced flexibility
     """
     try:
         logging.debug("Attempting to find table header")
 
-        # Enhance image for header detection
-        header_image = image.crop((0, 0, image.width, int(image.height * 0.2)))
-        enhanced = preprocess_image(header_image)
+        # Enhance image for header detection with multiple attempts
+        heights = [0.2, 0.3, 0.15]  # Try different heights for header search
+        for height_ratio in heights:
+            # Crop and enhance header section
+            header_image = image.crop((0, 0, image.width, int(image.height * height_ratio)))
+            enhanced = preprocess_image(header_image)
 
-        # Get OCR data for header
-        custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
-        header_data = pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.DICT, config=custom_config)
+            # Get OCR data with different configurations
+            configs = [
+                '--oem 3 --psm 6 -c preserve_interword_spaces=1',
+                '--oem 3 --psm 1 -c preserve_interword_spaces=1',
+                '--oem 3 --psm 3 -c preserve_interword_spaces=1'
+            ]
 
-        # Find header row
-        header_columns = {}
-        header_texts = []
+            for custom_config in configs:
+                try:
+                    header_data = pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.DICT, config=custom_config)
 
-        # First pass to identify header positions
-        for i in range(len(header_data['text'])):
-            text = header_data['text'][i].upper().strip()
-            if text:
-                header_texts.append(text)
-                x_start = header_data['left'][i]
-                x_end = x_start + header_data['width'][i]
+                    # Find header row
+                    header_columns = {}
+                    header_texts = []
 
-                if 'DATE' in text:
-                    header_columns['date'] = (0, x_end + 20)
-                elif any(word in text for word in ['TRANSACTION', 'DETAILS', 'DESCRIPTION']):
-                    header_columns['details'] = (x_start - 20, x_end + 20)
-                elif any(word in text for word in ['WITHDRAWAL', 'DEBIT', 'DR']):
-                    header_columns['withdrawals'] = (x_start - 20, x_end + 20)
-                elif any(word in text for word in ['DEPOSIT', 'CREDIT', 'CR']):
-                    header_columns['deposits'] = (x_start - 20, x_end + 20)
-                elif 'BALANCE' in text:
-                    header_columns['balance'] = (x_start - 20, image.width)
+                    # First pass to identify header positions
+                    for i in range(len(header_data['text'])):
+                        text = header_data['text'][i].upper().strip()
+                        if text:
+                            header_texts.append(text)
+                            x_start = header_data['left'][i]
+                            x_end = x_start + header_data['width'][i]
 
-        logging.debug(f"Found header texts: {header_texts}")
-        logging.debug(f"Detected header columns: {header_columns}")
+                            # More flexible header matching
+                            if any(word in text for word in ['DATE', 'TIME', 'WHEN']):
+                                header_columns['date'] = (0, x_end + 20)
+                            elif any(word in text for word in ['TRANS', 'DETAIL', 'DESC', 'PART', 'NARR']):
+                                header_columns['details'] = (x_start - 20, x_end + 20)
+                            elif any(word in text for word in ['WITH', 'DEBIT', 'DR', 'PAID', 'OUT']):
+                                header_columns['withdrawals'] = (x_start - 20, x_end + 20)
+                            elif any(word in text for word in ['DEP', 'CRED', 'CR', 'RECV', 'IN']):
+                                header_columns['deposits'] = (x_start - 20, x_end + 20)
+                            elif any(word in text for word in ['BAL', 'TOTAL', 'AMT']):
+                                header_columns['balance'] = (x_start - 20, image.width)
 
-        # If balance column not found, use last section of the image
-        if 'balance' not in header_columns and header_columns:
-            last_col_end = max(col[1] for col in header_columns.values())
-            header_columns['balance'] = (last_col_end, image.width)
-            logging.debug("Added balance column based on last position")
+                    # If we found enough columns, use this configuration
+                    if len(header_columns) >= 3:
+                        logging.debug(f"Found header with config: {custom_config}")
+                        logging.debug(f"Header texts: {header_texts}")
+                        logging.debug(f"Detected columns: {header_columns}")
+                        return header_columns
 
-        if not header_columns:
-            logging.warning("Header detection failed, using default column positions")
-            # Fallback to fixed positions
+                except Exception as e:
+                    logging.debug(f"Failed attempt with config {custom_config}: {str(e)}")
+                    continue
+
+        # If no header found, use intelligent column estimation
+        logging.warning("Header detection failed, using intelligent column estimation")
+        # Determine if the statement layout is vertical or horizontal based on text positions
+        try:
+            all_text = pytesseract.image_to_string(image)
+            lines = all_text.split('\n')
+            # Count numbers in different positions to determine layout
+            left_nums = sum(1 for line in lines if line.strip() and line.strip()[0].isdigit())
+            right_nums = sum(1 for line in lines if line.strip() and line.strip()[-1].isdigit())
+
+            if left_nums > right_nums:
+                # Likely vertical layout
+                width = image.width
+                return {
+                    'date': (0, int(width * 0.15)),
+                    'details': (int(width * 0.15), int(width * 0.6)),
+                    'withdrawals': (int(width * 0.6), int(width * 0.75)),
+                    'deposits': (int(width * 0.75), int(width * 0.9)),
+                    'balance': (int(width * 0.9), width)
+                }
+            else:
+                # Likely horizontal layout
+                width = image.width
+                return {
+                    'date': (0, int(width * 0.2)),
+                    'details': (int(width * 0.2), int(width * 0.5)),
+                    'withdrawals': (int(width * 0.5), int(width * 0.7)),
+                    'deposits': (int(width * 0.7), int(width * 0.85)),
+                    'balance': (int(width * 0.85), width)
+                }
+
+        except Exception as layout_error:
+            logging.error(f"Layout detection failed: {str(layout_error)}")
+            # Return default column positions
             width = image.width
-            header_columns = {
+            return {
                 'date': (0, int(width * 0.15)),
                 'details': (int(width * 0.15), int(width * 0.6)),
                 'withdrawals': (int(width * 0.6), int(width * 0.75)),
                 'deposits': (int(width * 0.75), int(width * 0.9)),
                 'balance': (int(width * 0.9), width)
             }
-
-        return header_columns
 
     except Exception as e:
         logging.error(f"Error in header detection: {str(e)}")
@@ -125,7 +167,7 @@ def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Apply multiple preprocessing steps to improve OCR accuracy
+    Enhanced image preprocessing with multiple techniques to improve OCR accuracy
     """
     try:
         # Convert to grayscale
@@ -142,21 +184,45 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         # Remove noise
         image = image.filter(ImageFilter.MedianFilter(size=3))
 
-        # Apply adaptive thresholding
+        # Apply advanced thresholding
         np_image = np.array(image)
-        block_size = 25
-        C = 5
-        mean = np_image.mean()
-        thresh = mean + C
-        binary = np_image > thresh
 
-        # Return processed image
-        processed = Image.fromarray((binary * 255).astype(np.uint8))
-        return processed
+        # Try different thresholding techniques
+        try:
+            # Adaptive thresholding
+            block_size = 25
+            C = 5
+            mean = np_image.mean()
+            thresh = mean + C
+            binary = np_image > thresh
+
+            # If adaptive thresholding produces poor results, try Otsu's method
+            if np.sum(binary) < (binary.size * 0.01):  # Less than 1% white pixels
+                # Otsu's thresholding
+                mean = np_image.mean()
+                std = np_image.std()
+                thresh = mean + std
+                binary = np_image > thresh
+
+            # Return processed image
+            processed = Image.fromarray((binary * 255).astype(np.uint8))
+
+            # Additional denoising if needed
+            if np.sum(binary) < (binary.size * 0.05):  # Less than 5% white pixels
+                processed = processed.filter(ImageFilter.MinFilter(3))
+
+            return processed
+
+        except Exception as thresh_error:
+            logging.warning(f"Advanced thresholding failed: {str(thresh_error)}")
+            # Fallback to simple thresholding
+            thresh = np_image.mean() + np_image.std()
+            binary = np_image > thresh
+            return Image.fromarray((binary * 255).astype(np.uint8))
 
     except Exception as e:
         logging.error(f"Error in image preprocessing: {str(e)}")
-        return image
+        return image  # Return original image if processing fails
 
 def extract_table_data(image: Image.Image) -> List[Dict]:
     """
