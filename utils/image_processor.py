@@ -9,45 +9,45 @@ import numpy as np
 import re
 import PyPDF2
 from datetime import datetime
-
-logging.basicConfig(level=logging.DEBUG)
+from .ml_processor import format_detector
 
 def is_image_based_pdf(pdf_path: str) -> bool:
     """
-    Determine if a PDF is image-based by comparing text extraction methods.
-    Returns True if the PDF is primarily image-based, False if it's text-based.
+    Enhanced PDF type detection using both traditional and ML-based approaches
     """
     try:
-        logging.debug(f"Checking if PDF is image-based: {pdf_path}")
+        logging.debug(f"Starting enhanced PDF type detection for: {pdf_path}")
 
-        # First try direct text extraction
+        # ML-based prediction
+        predicted_format = format_detector.predict_format(pdf_path)
+        if predicted_format != "unknown":
+            is_image = predicted_format == "image_based"
+            logging.info(f"ML model predicted format: {'image-based' if is_image else 'text-based'}")
+            return is_image
+
+        # Fallback to traditional detection
+        logging.info("Using traditional detection method as fallback")
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             direct_text = ''
-            for page in pdf_reader.pages[:2]:  # Check first two pages
+            for page in pdf_reader.pages[:2]:
                 direct_text += page.extract_text()
-
-            logging.debug(f"Direct text extraction length: {len(direct_text.strip())}")
 
         # Try OCR on first page
         images = convert_from_path(pdf_path, first_page=1, last_page=1)
         if not images:
             return False
 
-        # Get text from image using OCR
         ocr_text = pytesseract.image_to_string(images[0])
-        logging.debug(f"OCR text extraction length: {len(ocr_text.strip())}")
 
-        # If OCR gets text but direct extraction doesn't, it's image-based
-        if len(ocr_text.strip()) > 100 and len(direct_text.strip()) < 100:
-            logging.info("PDF appears to be image-based (OCR successful, direct extraction failed)")
-            return True
+        # If OCR gets significantly more text than direct extraction, it's likely image-based
+        is_image_based = len(ocr_text.strip()) > len(direct_text.strip()) * 1.5
+        logging.info(f"Traditional detection result: {'image-based' if is_image_based else 'text-based'}")
 
-        logging.info("PDF appears to be text-based")
-        return False
+        return is_image_based
 
     except Exception as e:
-        logging.error(f"Error detecting PDF type: {str(e)}")
+        logging.error(f"Error in PDF type detection: {str(e)}")
         return False
 
 def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
