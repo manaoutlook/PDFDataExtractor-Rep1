@@ -7,14 +7,27 @@ from pdf2image import convert_from_path
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 import re
+import PyPDF2
 
 def is_image_based_pdf(pdf_path: str) -> bool:
     """
-    Determine if a PDF is image-based by attempting text extraction with both methods
-    and comparing results.
+    Determine if a PDF is image-based by comparing text extraction methods.
+    Returns True if the PDF is primarily image-based, False if it's text-based.
     """
     try:
-        # Convert first page to image
+        # First try direct text extraction
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            direct_text = ''
+            for page in pdf_reader.pages[:2]:  # Check first two pages
+                direct_text += page.extract_text()
+
+            # If we get substantial text directly, it's likely text-based
+            if len(direct_text.strip()) > 100:
+                logging.info("PDF appears to be text-based (direct text extraction successful)")
+                return False
+
+        # If direct text extraction failed, try OCR
         images = convert_from_path(pdf_path, first_page=1, last_page=1)
         if not images:
             return False
@@ -22,9 +35,13 @@ def is_image_based_pdf(pdf_path: str) -> bool:
         # Get text from image using OCR
         image_text = pytesseract.image_to_string(images[0])
 
-        # If we get substantial text from OCR but not from direct extraction,
-        # it's likely an image-based PDF
-        return len(image_text.strip()) > 50
+        # Compare results
+        has_ocr_text = len(image_text.strip()) > 100
+        if has_ocr_text and not direct_text.strip():
+            logging.info("PDF appears to be image-based (OCR successful, direct extraction failed)")
+            return True
+
+        return False
 
     except Exception as e:
         logging.error(f"Error detecting PDF type: {str(e)}")
