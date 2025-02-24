@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from .image_processor import is_image_based_pdf, process_image_based_pdf
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -197,67 +198,69 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
-        # Configure Java options for headless mode
-        java_options = [
-            '-Djava.awt.headless=true',
-            '-Dfile.encoding=UTF8'
-        ]
+        # Detect if PDF is image-based
+        is_image_pdf = is_image_based_pdf(pdf_path)
+        logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
-        # Extract tables from PDF
-        logging.debug("Attempting to extract tables from PDF")
-        tables = tabula.read_pdf(
-            pdf_path,
-            pages='all',
-            multiple_tables=True,
-            guess=True,
-            lattice=False,
-            stream=True,
-            pandas_options={'header': None},
-            java_options=java_options
-        )
+        if is_image_pdf:
+            # Process image-based PDF
+            transactions = process_image_based_pdf(pdf_path)
+        else:
+            # Process text-based PDF using existing logic
+            # Configure Java options for headless mode
+            java_options = [
+                '-Djava.awt.headless=true',
+                '-Dfile.encoding=UTF8'
+            ]
 
-        if not tables:
-            logging.error("No tables extracted from PDF")
+            # Extract tables from PDF
+            logging.debug("Attempting to extract tables from PDF")
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=java_options
+            )
+
+            if not tables:
+                logging.error("No tables extracted from PDF")
+                return None
+
+            logging.debug(f"Extracted {len(tables)} tables from PDF")
+
+            transactions = []
+            seen_transactions = set()
+
+            # Process each table
+            for page_idx, table in enumerate(tables):
+                if len(table.columns) >= 4:  # Ensure table has required columns
+                    table.columns = range(len(table.columns))
+                    page_transactions = process_transaction_rows(table, page_idx)
+
+                    # Add unique transactions
+                    for trans in page_transactions:
+                        trans_key = (
+                            trans['Date'],
+                            trans['Transaction Details'],
+                            str(trans['Withdrawals ($)']),
+                            str(trans['Deposits ($)']),
+                            str(trans['Balance ($)'])
+                        )
+
+                        if trans_key not in seen_transactions:
+                            seen_transactions.add(trans_key)
+                            transactions.append(trans)
+
+        if not transactions:
+            logging.error("No transactions extracted")
             return None
 
-        logging.debug(f"Extracted {len(tables)} tables from PDF")
-
-        all_transactions = []
-        seen_transactions = set()
-
-        # Process each table
-        for page_idx, table in enumerate(tables):
-            logging.debug(f"Processing table {page_idx+1}, shape: {table.shape}")
-            logging.debug(f"Table contents:\n{table}")
-
-            if len(table.columns) >= 4:  # Ensure table has required columns
-                table.columns = range(len(table.columns))
-                transactions = process_transaction_rows(table, page_idx)
-
-                # Add unique transactions
-                for trans in transactions:
-                    # Create a comprehensive transaction key
-                    trans_key = (
-                        trans['Date'],
-                        trans['Transaction Details'],
-                        str(trans['Withdrawals ($)']),
-                        str(trans['Deposits ($)']),
-                        str(trans['Balance ($)'])
-                    )
-
-                    if trans_key not in seen_transactions:
-                        seen_transactions.add(trans_key)
-                        all_transactions.append(trans)
-                        logging.debug(f"Added unique transaction: {trans}")
-                    else:
-                        logging.debug(f"Skipping duplicate transaction: {trans}")
-
-        if not all_transactions:
-            logging.error("No transactions extracted from tables")
-            return None
-
-        logging.info(f"Successfully extracted {len(all_transactions)} unique transactions")
-        return all_transactions
+        logging.info(f"Successfully extracted {len(transactions)} transactions")
+        return transactions
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
