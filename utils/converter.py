@@ -7,6 +7,12 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
+from .template_manager import TemplateManager
+import PyPDF2
+import re
+
+# Add template manager to the module scope
+template_manager = TemplateManager()
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -58,8 +64,8 @@ def parse_date(date_str):
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
 
-def process_transaction_rows(table, page_idx):
-    """Process rows and handle multi-line transactions"""
+def process_transaction_rows(table, page_idx, template=None):
+    """Process rows and handle multi-line transactions with optional template guidance"""
     processed_data = []
     current_buffer = []
 
@@ -93,13 +99,21 @@ def process_transaction_rows(table, page_idx):
             '_row_idx': int(current_buffer[0][-1])
         }
 
-        # Process all rows
+        # Process all rows with template guidance if available
         details = []
         for row in current_buffer:
-            # Add description
-            if row[1].strip():
-                details.append(row[1].strip())
-                logging.debug(f"Added description: {row[1].strip()}")
+            if template:
+                # Apply template-specific processing rules
+                if row[1].strip():
+                    # Clean description based on template patterns
+                    cleaned_text = row[1].strip()
+                    for pattern in template.patterns.get('transaction', []):
+                        cleaned_text = re.sub(pattern, '', cleaned_text).strip()
+                    details.append(cleaned_text)
+            else:
+                # Default processing
+                if row[1].strip():
+                    details.append(row[1].strip())
 
             # Process amounts with detailed logging
             withdrawal = clean_amount(row[2])
@@ -202,11 +216,22 @@ def convert_pdf_to_data(pdf_path: str):
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
+        # Extract raw text for template matching
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text_content = ''
+            for page in pdf_reader.pages:
+                text_content += page.extract_text()
+
+        # Find matching template
+        template = template_manager.find_matching_template(text_content)
+        if template:
+            logging.info(f"Found matching template: {template.name}")
+
         if is_image_pdf:
             # Process image-based PDF
-            transactions = process_image_based_pdf(pdf_path)
+            transactions = process_image_based_pdf(pdf_path, template)
         else:
-            # Process text-based PDF using existing logic
             # Configure Java options for headless mode
             java_options = [
                 '-Djava.awt.headless=true',
@@ -235,11 +260,16 @@ def convert_pdf_to_data(pdf_path: str):
             transactions = []
             seen_transactions = set()
 
-            # Process each table
+            # Process each table with template guidance if available
             for page_idx, table in enumerate(tables):
                 if len(table.columns) >= 4:  # Ensure table has required columns
                     table.columns = range(len(table.columns))
-                    page_transactions = process_transaction_rows(table, page_idx)
+                    if template:
+                        # Apply template-specific processing
+                        page_transactions = process_transaction_rows(table, page_idx, template)
+                    else:
+                        # Fall back to default processing
+                        page_transactions = process_transaction_rows(table, page_idx)
 
                     # Add unique transactions
                     for trans in page_transactions:
