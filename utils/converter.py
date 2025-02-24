@@ -289,6 +289,9 @@ def convert_pdf_to_data(pdf_path: str):
             for page in pdf_reader.pages:
                 text_content += page.extract_text()
 
+            logging.info("Extracted text content sample:")
+            logging.info(text_content[:500])  # Log first 500 chars for debugging
+
         # Find matching template
         template = template_manager.find_matching_template(text_content)
         if template:
@@ -305,6 +308,7 @@ def convert_pdf_to_data(pdf_path: str):
 
         # Extract tables from PDF
         java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
+        logging.info("Starting table extraction with tabula")
         tables = tabula.read_pdf(
             pdf_path,
             pages='all',
@@ -327,6 +331,11 @@ def convert_pdf_to_data(pdf_path: str):
         seen_transactions = set()
 
         for page_idx, table in enumerate(tables):
+            logging.info(f"\nProcessing table on page {page_idx + 1}")
+            logging.info(f"Table shape: {table.shape}")
+            logging.info(f"Table columns: {table.columns}")
+            logging.info(f"First few rows:\n{table.head()}")
+
             if len(table.columns) >= 4:
                 table.columns = range(len(table.columns))
 
@@ -362,6 +371,7 @@ def convert_pdf_to_data(pdf_path: str):
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
+        logging.exception("Stack trace:")
         return None
 
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
