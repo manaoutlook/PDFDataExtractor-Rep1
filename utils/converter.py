@@ -8,6 +8,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
 
+logging.basicConfig(level=logging.DEBUG)
+
 def clean_amount(amount_str):
     """Clean and format amount strings"""
     if pd.isna(amount_str):
@@ -48,7 +50,7 @@ def parse_date(date_str):
                     day = 30
                 date_str = f"{day:02d} {month} {current_year}"
                 parsed_date = datetime.strptime(date_str, '%d %b %Y')
-                return parsed_date
+                return parsed_date.strftime('%d %b')
             except (ValueError, IndexError) as e:
                 logging.debug(f"Date parse error: {e} for {date_str}")
                 return None
@@ -84,7 +86,7 @@ def process_transaction_rows(table, page_idx):
 
         # Initialize transaction
         transaction = {
-            'Date': date.strftime('%d %b'),
+            'Date': date,
             'Transaction Details': '',
             'Withdrawals ($)': '',
             'Deposits ($)': '',
@@ -182,11 +184,6 @@ def process_transaction_rows(table, page_idx):
         trans.pop('_page_idx', None)
         trans.pop('_row_idx', None)
 
-    # Log results
-    logging.debug(f"Processed {len(processed_data)} transactions")
-    for idx, trans in enumerate(processed_data):
-        logging.debug(f"Transaction {idx}: {trans}")
-
     return processed_data
 
 def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
@@ -206,25 +203,40 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
             # Process image-based PDF
             transactions = process_image_based_pdf(pdf_path)
         else:
-            # Process text-based PDF using existing logic
-            # Configure Java options for headless mode
+            # Process text-based PDF using tabula-py with enhanced settings
             java_options = [
                 '-Djava.awt.headless=true',
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF
-            logging.debug("Attempting to extract tables from PDF")
+            # Extract tables from PDF with multiple detection methods
+            logging.debug("Attempting to extract tables from PDF with stream mode")
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
                 multiple_tables=True,
                 guess=True,
-                lattice=False,
                 stream=True,
+                lattice=False,
                 pandas_options={'header': None},
-                java_options=java_options
+                java_options=java_options,
+                area=[0, 0, 100, 100],  # Use full page area
+                relative_area=True,      # Use relative coordinates
+                silent=True
             )
+
+            if not tables:
+                logging.debug("Stream mode failed, trying lattice mode")
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages='all',
+                    multiple_tables=True,
+                    guess=True,
+                    stream=False,
+                    lattice=True,
+                    pandas_options={'header': None},
+                    java_options=java_options
+                )
 
             if not tables:
                 logging.error("No tables extracted from PDF")
@@ -237,6 +249,11 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
 
             # Process each table
             for page_idx, table in enumerate(tables):
+                logging.debug(f"Processing table on page {page_idx + 1}")
+                logging.debug(f"Table shape: {table.shape}")
+                logging.debug(f"Table columns: {table.columns}")
+                logging.debug(f"First few rows:\n{table.head()}")
+
                 if len(table.columns) >= 4:  # Ensure table has required columns
                     table.columns = range(len(table.columns))
                     page_transactions = process_transaction_rows(table, page_idx)
@@ -254,6 +271,7 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
                         if trans_key not in seen_transactions:
                             seen_transactions.add(trans_key)
                             transactions.append(trans)
+                            logging.debug(f"Added transaction: {trans}")
 
         if not transactions:
             logging.error("No transactions extracted")
