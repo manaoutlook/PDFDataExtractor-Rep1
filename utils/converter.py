@@ -8,6 +8,7 @@ from pdf2image import convert_from_path
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from utils.adobe_extractor import AdobePDFExtractor
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -257,6 +258,15 @@ def extract_image_based_data(pdf_path):
         logging.error(f"Error in image-based extraction: {str(e)}")
         return None
 
+def extract_pdf_content_with_adobe(pdf_path):
+    """Extract PDF content using Adobe PDF Services API"""
+    try:
+        extractor = AdobePDFExtractor()
+        return extractor.extract_pdf_content(pdf_path)
+    except Exception as e:
+        logging.error(f"Error in Adobe PDF extraction: {str(e)}")
+        return None
+
 def convert_pdf_to_data(pdf_path: str, pdf_type: str = 'text'):
     """Extract data from PDF bank statement based on type"""
     try:
@@ -266,17 +276,18 @@ def convert_pdf_to_data(pdf_path: str, pdf_type: str = 'text'):
             logging.error("PDF file not found")
             return None
 
-        if pdf_type == 'text':
-            data = extract_text_based_data(pdf_path)
-        else:  # image
-            data = extract_image_based_data(pdf_path)
+        # Try Adobe extraction first for image-based PDFs
+        if pdf_type == 'image':
+            data = extract_pdf_content_with_adobe(pdf_path)
+            if data:
+                return data
+            logging.warning("Adobe extraction failed, falling back to OCR")
 
-        if data:
-            logging.info(f"Successfully extracted {len(data)} transactions")
-            return data
-        else:
-            logging.error("No transactions could be extracted from the PDF")
-            return None
+        # Use regular extraction methods as fallback
+        if pdf_type == 'text':
+            return extract_text_based_data(pdf_path)
+        else:  # image
+            return extract_image_based_data(pdf_path)
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
