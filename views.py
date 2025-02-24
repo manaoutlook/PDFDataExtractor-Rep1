@@ -5,6 +5,8 @@ from flask import render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from app import app
 from utils.converter import convert_pdf, convert_pdf_to_data
+import tabula
+import PyPDF2
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -15,6 +17,67 @@ def allowed_file(filename):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/test_pdf', methods=['POST'])
+def test_pdf():
+    """Test endpoint to analyze PDF structure"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
+            file.save(pdf_path)
+
+            # Extract text content
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                text_content = []
+                for page in pdf_reader.pages:
+                    text_content.append(page.extract_text())
+
+            # Extract tables using tabula
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=False,
+                lattice=False,
+                stream=True,
+                columns=[70, 250, 350, 450, 550],
+                area=[150, 50, 750, 550],
+                relative_area=False,
+                pandas_options={'header': None}
+            )
+
+            # Convert tables to list format for JSON serialization
+            table_data = []
+            for i, table in enumerate(tables):
+                table_data.append({
+                    'page': i + 1,
+                    'shape': table.shape,
+                    'columns': list(table.columns),
+                    'rows': table.values.tolist()
+                })
+
+            return jsonify({
+                'filename': file.filename,
+                'num_pages': len(pdf_reader.pages),
+                'text_content': text_content,
+                'tables_found': len(tables),
+                'table_data': table_data
+            })
+
+    except Exception as e:
+        logger.error(f"Error in PDF analysis: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/preview', methods=['POST'])
 def preview_data():
