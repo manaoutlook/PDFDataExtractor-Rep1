@@ -19,3 +19,5 @@ trafilatura
 trafilatura
 beautifulsoup4
 requests
+flask-login
+sqlalchemy

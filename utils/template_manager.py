@@ -2,7 +2,8 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 import json
-import os
+from extensions import db
+from models import BankTemplate, TemplateSimilarity
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -43,12 +44,11 @@ class BankStatementTemplate:
         return final_score
 
 class TemplateManager:
-    def __init__(self, templates_dir: str = "templates"):
+    def __init__(self):
         """
-        Initialize the template manager
+        Initialize the template manager with database support
         """
         self.templates: List[BankStatementTemplate] = []
-        self.templates_dir = templates_dir
         self._load_templates()
 
     def _create_default_templates(self):
@@ -56,6 +56,7 @@ class TemplateManager:
         default_templates = [
             {
                 "name": "ANZ_Personal",
+                "description": "ANZ Bank Personal Account Statement",
                 "patterns": {
                     "header": [
                         r"ANZ\s+Bank",
@@ -81,6 +82,7 @@ class TemplateManager:
             },
             {
                 "name": "RBS_Personal",
+                "description": "Royal Bank of Scotland Personal Account Statement",
                 "patterns": {
                     "header": [
                         r"Royal\s+Bank\s+of\s+Scotland",
@@ -113,44 +115,49 @@ class TemplateManager:
             }
         ]
 
-        for template in default_templates:
-            filename = f"{template['name'].lower()}.json"
-            filepath = os.path.join(self.templates_dir, filename)
-            with open(filepath, 'w') as f:
-                json.dump(template, f, indent=2)
-            logger.debug(f"Created default template: {filename}")
+        for template_data in default_templates:
+            # Check if template already exists
+            template = BankTemplate.query.filter_by(name=template_data['name']).first()
+            if not template:
+                template = BankTemplate(
+                    name=template_data['name'],
+                    description=template_data['description'],
+                    patterns=json.dumps(template_data['patterns']),
+                    layout=json.dumps(template_data['layout'])
+                )
+                db.session.add(template)
+                logger.debug(f"Created default template: {template.name}")
 
-        self._load_templates()
+        try:
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Error creating default templates: {str(e)}")
+            db.session.rollback()
 
     def _load_templates(self):
-        """Load all template definitions from the templates directory"""
+        """Load all templates from database"""
         try:
-            if not os.path.exists(self.templates_dir):
-                os.makedirs(self.templates_dir)
+            # Ensure default templates exist
+            if BankTemplate.query.count() == 0:
                 self._create_default_templates()
 
-            self.templates = []  # Reset templates list before loading
-            for filename in os.listdir(self.templates_dir):
-                if filename.endswith('.json'):
-                    try:
-                        with open(os.path.join(self.templates_dir, filename)) as f:
-                            template_data = json.load(f)
-                            template = BankStatementTemplate(
-                                name=template_data['name'],
-                                patterns=template_data['patterns'],
-                                layout=template_data['layout']
-                            )
-                            self.templates.append(template)
-                            logger.debug(f"Loaded template: {template.name}")
-                    except Exception as e:
-                        logger.error(f"Error loading template {filename}: {str(e)}")
+            # Load all templates
+            self.templates = []
+            for db_template in BankTemplate.query.all():
+                template = BankStatementTemplate(
+                    name=db_template.name,
+                    patterns=json.loads(db_template.patterns),
+                    layout=json.loads(db_template.layout)
+                )
+                self.templates.append(template)
+                logger.debug(f"Loaded template: {template.name}")
 
         except Exception as e:
             logger.error(f"Error loading templates: {str(e)}")
 
     def find_matching_template(self, text: str) -> Optional[BankStatementTemplate]:
         """
-        Find the best matching template for the given text
+        Find the best matching template for the given text and store similarity scores
         """
         best_score = 0
         best_template = None
@@ -158,16 +165,35 @@ class TemplateManager:
         logging.debug("Starting template matching process")
         logging.debug(f"Text sample: {text[:200]}...")  # Log first 200 chars of text
 
+        # Get all templates from database
+        db_templates = BankTemplate.query.all()
+
         for template in self.templates:
             logging.debug(f"Checking template: {template.name}")
             score = template.match_score(text)
             logging.debug(f"Template {template.name} scored: {score}")
+
             if score > best_score:
                 best_score = score
                 best_template = template
                 logging.debug(f"New best template: {template.name} with score {score}")
 
-        # Require at least 30% match to consider it valid (lowered threshold for testing)
+            # Store similarity score in database
+            try:
+                for other_template in db_templates:
+                    if other_template.name != template.name:
+                        similarity = TemplateSimilarity(
+                            template_id=BankTemplate.query.filter_by(name=template.name).first().id,
+                            similar_template_id=other_template.id,
+                            similarity_score=score
+                        )
+                        db.session.add(similarity)
+                db.session.commit()
+            except Exception as e:
+                logger.error(f"Error storing similarity score: {str(e)}")
+                db.session.rollback()
+
+        # Require at least 30% match to consider it valid
         if best_score >= 0.3:
             logging.info(f"Selected template {best_template.name} with score {best_score}")
             return best_template
@@ -181,28 +207,3 @@ class TemplateManager:
             if template.name.lower() == name.lower():
                 return template
         return None
-
-    def add_template(self, template_data: Dict) -> bool:
-        """
-        Add a new template to the system
-        """
-        try:
-            template = BankStatementTemplate(
-                name=template_data['name'],
-                patterns=template_data['patterns'],
-                layout=template_data['layout']
-            )
-
-            # Save to file
-            filename = f"{template.name.lower()}.json"
-            filepath = os.path.join(self.templates_dir, filename)
-            with open(filepath, 'w') as f:
-                json.dump(template_data, f, indent=2)
-
-            self.templates.append(template)
-            logger.debug(f"Added new template: {template.name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding template: {str(e)}")
-            return False
