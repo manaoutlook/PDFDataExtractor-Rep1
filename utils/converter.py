@@ -75,70 +75,97 @@ def process_transaction_rows(table, page_idx):
         logging.debug(f"Processing table on page {page_idx + 1}")
         logging.debug(f"Table shape: {table.shape}")
         logging.debug(f"Table columns: {table.columns}")
-        logging.debug(f"First few rows:\n{table.head()}")
 
-        # Identify columns based on headers
-        header_row = None
-        for idx, row in table.iterrows():
-            row_text = ' '.join(str(val).upper() for val in row if not pd.isna(val))
-            if any(keyword in row_text for keyword in ['DATE', 'TRANSACTION', 'AMOUNT', 'BALANCE']):
-                header_row = idx
-                break
+        def process_buffer():
+            if not current_buffer:
+                return None
 
-        if header_row is not None:
-            # Skip header row
-            table = table.iloc[header_row + 1:].reset_index(drop=True)
+            # Get date from first row
+            date = parse_date(current_buffer[0][0])
+            if not date:
+                logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
+                return None
+
+            # Initialize transaction
+            transaction = {
+                'Date': date,
+                'Transaction Details': '',
+                'Withdrawals ($)': '',
+                'Deposits ($)': '',
+                'Balance ($)': '',
+                '_page_idx': page_idx,
+                '_row_idx': int(current_buffer[0][-1])
+            }
+
+            # Process all rows
+            details = []
+            for row in current_buffer:
+                # Add description
+                if row[1].strip():
+                    details.append(row[1].strip())
+                    logging.debug(f"Added description: {row[1].strip()}")
+
+                # Process amounts
+                withdrawal = clean_amount(row[2]) if len(row) > 2 else ''
+                deposit = clean_amount(row[3]) if len(row) > 3 else ''
+                balance = clean_amount(row[4]) if len(row) > 4 else ''
+
+                logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
+
+                # Update amounts if not already set
+                if withdrawal and not transaction['Withdrawals ($)']:
+                    transaction['Withdrawals ($)'] = withdrawal
+                if deposit and not transaction['Deposits ($)']:
+                    transaction['Deposits ($)'] = deposit
+                if balance and not transaction['Balance ($)']:
+                    transaction['Balance ($)'] = balance
+
+            # Join details
+            transaction['Transaction Details'] = '\n'.join(filter(None, details))
+            logging.debug(f"Final transaction: {transaction}")
+            return transaction
 
         # Process each row
         for idx, row in table.iterrows():
+            # Clean row values and add index
             row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
+            row_values.append(idx)
 
-            # Skip empty rows
-            if not any(row_values):
+            # Skip header rows
+            if any(header in ' '.join(row_values).upper() for header in [
+                'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
+                'OPENING', 'TOTALS', 'DATE'
+            ]):
+                if current_buffer:
+                    trans = process_buffer()
+                    if trans:
+                        processed_data.append(trans)
+                    current_buffer = []
                 continue
 
-            # Try to identify transaction components
-            date = ''
-            details = []
-            withdrawal = ''
-            deposit = ''
-            balance = ''
+            # Check for date and content
+            has_date = any(char.isdigit() for char in row_values[0])
+            has_content = any(val.strip() for val in row_values[1:])
 
-            for col_idx, value in enumerate(row_values):
-                if not value:
-                    continue
+            if has_date and has_content:
+                # Process previous buffer if exists
+                if current_buffer:
+                    trans = process_buffer()
+                    if trans:
+                        processed_data.append(trans)
+                    current_buffer = []
 
-                # First non-empty column usually contains the date
-                if not date and any(char.isdigit() for char in value):
-                    date = value
-                    continue
+                # Start new buffer
+                current_buffer = [row_values]
+            elif current_buffer and has_content:
+                # Add to current buffer
+                current_buffer.append(row_values)
 
-                # Check if value looks like an amount
-                if value.replace('.', '').replace(',', '').replace('-', '').replace('$', '').isdigit():
-                    # Last amount is usually balance
-                    if not balance:
-                        balance = clean_amount(value)
-                    # Earlier amounts are withdrawals/deposits
-                    elif not withdrawal:
-                        withdrawal = clean_amount(value)
-                    elif not deposit:
-                        deposit = clean_amount(value)
-                else:
-                    # Non-amount values are probably transaction details
-                    details.append(value)
-
-            if date or details:
-                transaction = {
-                    'Date': date,
-                    'Transaction Details': ' '.join(details),
-                    'Withdrawals ($)': withdrawal,
-                    'Deposits ($)': deposit,
-                    'Balance ($)': balance,
-                    '_page_idx': page_idx,
-                    '_row_idx': idx
-                }
-                processed_data.append(transaction)
-                logging.debug(f"Extracted transaction: {transaction}")
+        # Process final buffer
+        if current_buffer:
+            trans = process_buffer()
+            if trans:
+                processed_data.append(trans)
 
         return processed_data
 
@@ -183,7 +210,6 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
                 relative_area=True
             )
 
-            # Method 2: Try lattice mode if stream mode failed
             if not tables:
                 logging.debug("Stream mode failed, trying lattice mode")
                 tables = tabula.read_pdf(
@@ -197,7 +223,6 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
                     java_options=java_options
                 )
 
-            # Method 3: Try without table detection
             if not tables:
                 logging.debug("Lattice mode failed, trying without table detection")
                 tables = tabula.read_pdf(
@@ -216,14 +241,15 @@ def convert_pdf_to_data(pdf_path: str, force_text_based: bool = False):
 
             logging.debug(f"Extracted {len(tables)} tables from PDF")
 
+            # Process each table
             transactions = []
             seen_transactions = set()
 
-            # Process each table
             for page_idx, table in enumerate(tables):
                 if len(table.columns) < 2:  # Skip tables with too few columns
                     continue
 
+                table.columns = range(len(table.columns))  # Ensure numeric column names
                 page_transactions = process_transaction_rows(table, page_idx)
 
                 # Add unique transactions
