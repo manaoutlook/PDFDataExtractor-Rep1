@@ -7,12 +7,6 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
-from .template_manager import TemplateManager
-import PyPDF2
-import re
-
-# Add template manager to the module scope
-template_manager = TemplateManager()
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -39,193 +33,161 @@ def parse_date(date_str):
         date_str = str(date_str).strip().upper()
 
         # Skip rows that aren't dates
-        if any(word in date_str.upper() for word in ['TOTALS', 'BALANCE', 'OPENING', 'CLOSING', 'BROUGHT', 'CARRIED']):
+        if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
             return None
 
-        # Handle different date formats
-        date_patterns = [
-            # "26 APR" format
-            (r'(\d{1,2})\s*([A-Za-z]{3})', '%d %b %Y'),
-            # "26/04/2023" format
-            (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', '%d/%m/%Y'),
-            # "2023-04-26" format
-            (r'(\d{4})-(\d{1,2})-(\d{1,2})', '%Y-%m-%d')
-        ]
-
-        for pattern, date_format in date_patterns:
-            match = re.match(pattern, date_str)
-            if match:
-                try:
-                    if len(match.groups()) == 2:  # Day-Month format
-                        day = int(match.group(1))
-                        month = match.group(2)
-                        current_year = datetime.now().year
-                        date_str = f"{day:02d} {month} {current_year}"
-                        return datetime.strptime(date_str, '%d %b %Y')
-                    else:  # Full date format
-                        if '/' in date_str or '-' in date_str:
-                            # Normalize separators
-                            normalized_date = re.sub(r'[/-]', '/', date_str)
-                            parts = normalized_date.split('/')
-
-                            # Handle 2-digit year
-                            if len(parts[2]) == 2:
-                                parts[2] = '20' + parts[2]
-
-                            return datetime.strptime('/'.join(parts), date_format)
-                except (ValueError, IndexError) as e:
-                    logging.debug(f"Date parse error: {e} for {date_str}")
-                    continue
+        # Handle day and month format (e.g., "26 APR")
+        parts = date_str.split()
+        if len(parts) == 2:
+            try:
+                day = int(parts[0])
+                month = parts[1][:3]  # Take first 3 chars of month
+                current_year = datetime.now().year
+                # Handle special case for dates like "31 APR"
+                if month == 'APR' and day == 31:
+                    day = 30
+                date_str = f"{day:02d} {month} {current_year}"
+                parsed_date = datetime.strptime(date_str, '%d %b %Y')
+                return parsed_date
+            except (ValueError, IndexError) as e:
+                logging.debug(f"Date parse error: {e} for {date_str}")
+                return None
 
         return None
-
     except Exception as e:
         logging.debug(f"Failed to parse date: {date_str}, error: {str(e)}")
         return None
 
-def process_transaction_rows(table, page_idx, template=None):
-    """Process rows and handle multi-line transactions with optional template guidance"""
-    try:
-        processed_data = []
-        current_buffer = []
+def process_transaction_rows(table, page_idx):
+    """Process rows and handle multi-line transactions"""
+    processed_data = []
+    current_buffer = []
 
-        # Clean the table
-        table = table.dropna(how='all').reset_index(drop=True)
+    # Clean the table
+    table = table.dropna(how='all').reset_index(drop=True)
 
-        logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
-        logging.debug(f"Table columns: {table.columns}")
-        logging.debug(f"First few rows: {table.head()}")
+    logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
+    logging.debug(f"Table columns: {table.columns}")
+    logging.debug(f"First few rows: {table.head()}")
 
-        def process_buffer():
-            if not current_buffer:
-                return None
+    def process_buffer():
+        if not current_buffer:
+            return None
 
-            logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
+        logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
 
-            # Get date from first row
-            date = parse_date(current_buffer[0][0])
-            if not date:
-                logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
-                return None
+        # Get date from first row
+        date = parse_date(current_buffer[0][0])
+        if not date:
+            logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
+            return None
 
-            # Initialize transaction
-            transaction = {
-                'Date': date.strftime('%d %b'),
-                'Transaction Details': '',
-                'Withdrawals ($)': '',
-                'Deposits ($)': '',
-                'Balance ($)': '',
-                '_page_idx': page_idx,
-                '_row_idx': int(current_buffer[0][-1])
-            }
+        # Initialize transaction
+        transaction = {
+            'Date': date.strftime('%d %b'),
+            'Transaction Details': '',
+            'Withdrawals ($)': '',
+            'Deposits ($)': '',
+            'Balance ($)': '',
+            '_page_idx': page_idx,
+            '_row_idx': int(current_buffer[0][-1])
+        }
 
-            # Process all rows with template guidance if available
-            details = []
-            for row in current_buffer:
-                if template and template.name == 'RBS_Personal':
-                    # Special handling for RBS format
-                    if row[1].strip():
-                        # Clean description based on RBS patterns
-                        cleaned_text = row[1].strip()
-                        cleaned_text = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', '', cleaned_text).strip()
-                        cleaned_text = re.sub(r'\b\d{6,}\b', '', cleaned_text).strip()
-                        details.append(cleaned_text)
-                else:
-                    # Default processing
-                    if row[1].strip():
-                        details.append(row[1].strip())
+        # Process all rows
+        details = []
+        for row in current_buffer:
+            # Add description
+            if row[1].strip():
+                details.append(row[1].strip())
+                logging.debug(f"Added description: {row[1].strip()}")
 
-                # Process amounts with detailed logging
-                withdrawal = clean_amount(row[2])
-                deposit = clean_amount(row[3])
-                balance = clean_amount(row[4]) if len(row) > 4 else ''
+            # Process amounts with detailed logging
+            withdrawal = clean_amount(row[2])
+            deposit = clean_amount(row[3])
+            balance = clean_amount(row[4]) if len(row) > 4 else ''
 
-                logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
+            logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
 
-                # Update amounts if not already set
-                if withdrawal and not transaction['Withdrawals ($)']:
-                    transaction['Withdrawals ($)'] = withdrawal
-                    logging.debug(f"Set withdrawal: {withdrawal}")
-                if deposit and not transaction['Deposits ($)']:
-                    transaction['Deposits ($)'] = deposit
-                    logging.debug(f"Set deposit: {deposit}")
-                if balance and not transaction['Balance ($)']:
-                    transaction['Balance ($)'] = balance
-                    logging.debug(f"Set balance: {balance}")
+            # Update amounts if not already set
+            if withdrawal and not transaction['Withdrawals ($)']:
+                transaction['Withdrawals ($)'] = withdrawal
+                logging.debug(f"Set withdrawal: {withdrawal}")
+            if deposit and not transaction['Deposits ($)']:
+                transaction['Deposits ($)'] = deposit
+                logging.debug(f"Set deposit: {deposit}")
+            if balance and not transaction['Balance ($)']:
+                transaction['Balance ($)'] = balance
+                logging.debug(f"Set balance: {balance}")
 
-            # Join details
-            transaction['Transaction Details'] = '\n'.join(filter(None, details))
-            logging.debug(f"Final transaction: {transaction}")
-            return transaction
+        # Join details
+        transaction['Transaction Details'] = '\n'.join(filter(None, details))
+        logging.debug(f"Final transaction: {transaction}")
+        return transaction
 
-        # Process each row
-        for idx, row in table.iterrows():
-            # Clean row values and add index
-            row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
-            row_values.append(idx)
+    # Process each row
+    for idx, row in table.iterrows():
+        # Clean row values and add index
+        row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
+        row_values.append(idx)
 
-            logging.debug(f"Processing row {idx}: {row_values}")
+        logging.debug(f"Processing row {idx}: {row_values}")
 
-            # Skip header rows with RBS-specific patterns
-            if any(header in row_values[1].upper() for header in [
-                'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-                'DESCRIPTION', 'DATE', 'TYPE', 'AMOUNT',
-                'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD',
-                'BROUGHT FORWARD', 'CARRIED FORWARD', 'STATEMENT FROM', 'STATEMENT TO'
-            ]):
-                logging.debug(f"Skipping header row: {row_values}")
-                if current_buffer:
-                    trans = process_buffer()
-                    if trans:
-                        processed_data.append(trans)
-                    current_buffer = []
-                continue
+        # Skip header rows
+        if any(header in row_values[1].upper() for header in [
+            'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
+            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
+        ]):
+            logging.debug(f"Skipping header row: {row_values}")
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
+            continue
 
-            # Check for date and content
-            has_date = bool(parse_date(row_values[0]))
-            has_content = any(val.strip() for val in row_values[1:5])
+        # Check for date and content
+        has_date = bool(parse_date(row_values[0]))
+        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
 
-            logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
+        logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
-            if has_date:
-                # Process previous buffer if exists
-                if current_buffer:
-                    trans = process_buffer()
-                    if trans:
-                        processed_data.append(trans)
-                        logging.debug(f"Added transaction from buffer: {trans}")
-                    current_buffer = []
+        if has_date:
+            # Process previous buffer if exists
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+                current_buffer = []
 
-                # Start new buffer
-                current_buffer = [row_values]
-                logging.debug(f"Started new transaction: {row_values}")
+            # Start new buffer
+            current_buffer = [row_values]
+            logging.debug(f"Started new transaction: {row_values}")
 
-            elif current_buffer and has_content:
-                # Add to current buffer
-                current_buffer.append(row_values)
-                logging.debug(f"Added to current transaction: {row_values}")
+        elif current_buffer and has_content:
+            # Add to current buffer
+            current_buffer.append(row_values)
+            logging.debug(f"Added to current transaction: {row_values}")
 
-        # Process final buffer
-        if current_buffer:
-            trans = process_buffer()
-            if trans:
-                processed_data.append(trans)
-                logging.debug(f"Added final transaction: {trans}")
+    # Process final buffer
+    if current_buffer:
+        trans = process_buffer()
+        if trans:
+            processed_data.append(trans)
 
-        # Sort by page and row index
-        processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
+    # Sort by page and row index
+    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
 
-        # Remove tracking fields
-        for trans in processed_data:
-            trans.pop('_page_idx', None)
-            trans.pop('_row_idx', None)
+    # Remove tracking fields
+    for trans in processed_data:
+        trans.pop('_page_idx', None)
+        trans.pop('_row_idx', None)
 
-        logging.info(f"Successfully processed {len(processed_data)} transactions")
-        return processed_data
+    # Log results
+    logging.debug(f"Processed {len(processed_data)} transactions")
+    for idx, trans in enumerate(processed_data):
+        logging.debug(f"Transaction {idx}: {trans}")
 
-    except Exception as e:
-        logging.error(f"Error processing transactions: {str(e)}")
-        return []
+    return processed_data
 
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
@@ -240,41 +202,26 @@ def convert_pdf_to_data(pdf_path: str):
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
-        # Extract raw text for template matching
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text_content = ''
-            for page in pdf_reader.pages:
-                text_content += page.extract_text()
-
-        # Find matching template
-        template = template_manager.find_matching_template(text_content)
-        if template:
-            logging.info(f"Found matching template: {template.name}")
-            logging.debug(f"Template patterns: {template.patterns}")
-            logging.debug(f"Template layout: {template.layout}")
-
         if is_image_pdf:
             # Process image-based PDF
-            transactions = process_image_based_pdf(pdf_path, template)
+            transactions = process_image_based_pdf(pdf_path)
         else:
+            # Process text-based PDF using existing logic
             # Configure Java options for headless mode
             java_options = [
                 '-Djava.awt.headless=true',
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF with RBS-specific settings
+            # Extract tables from PDF
             logging.debug("Attempting to extract tables from PDF")
             tables = tabula.read_pdf(
                 pdf_path,
                 pages='all',
                 multiple_tables=True,
-                guess=False,  # Disable guessing for more precise control
+                guess=True,
                 lattice=False,
                 stream=True,
-                area=[10, 0, 100, 100],  # Focus on the main content area
-                relative_area=True,  # Use relative coordinates
                 pandas_options={'header': None},
                 java_options=java_options
             )
@@ -284,24 +231,15 @@ def convert_pdf_to_data(pdf_path: str):
                 return None
 
             logging.debug(f"Extracted {len(tables)} tables from PDF")
-            for idx, table in enumerate(tables):
-                logging.debug(f"Table {idx} shape: {table.shape}")
-                logging.debug(f"Table {idx} columns: {table.columns}")
-                logging.debug(f"Table {idx} first few rows:\n{table.head()}")
 
             transactions = []
             seen_transactions = set()
 
-            # Process each table with template guidance if available
+            # Process each table
             for page_idx, table in enumerate(tables):
                 if len(table.columns) >= 4:  # Ensure table has required columns
                     table.columns = range(len(table.columns))
-                    if template:
-                        # Apply template-specific processing
-                        page_transactions = process_transaction_rows(table, page_idx, template)
-                    else:
-                        # Fall back to default processing
-                        page_transactions = process_transaction_rows(table, page_idx)
+                    page_transactions = process_transaction_rows(table, page_idx)
 
                     # Add unique transactions
                     for trans in page_transactions:
@@ -316,8 +254,6 @@ def convert_pdf_to_data(pdf_path: str):
                         if trans_key not in seen_transactions:
                             seen_transactions.add(trans_key)
                             transactions.append(trans)
-                else:
-                    logging.warning(f"Table on page {page_idx + 1} has insufficient columns: {len(table.columns)}")
 
         if not transactions:
             logging.error("No transactions extracted")
