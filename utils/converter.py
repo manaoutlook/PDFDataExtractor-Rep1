@@ -44,13 +44,18 @@ def parse_date(date_str):
 
         # Handle different date formats
         date_patterns = [
-            # "26 APR" format
-            (r'(\d{1,2})\s*([A-Za-z]{3})', '%d %b %Y'),
-            # "26/04/2023" format
+            # "26 APR 2023", "26 APR", "26APR", "26 APRIL", "26APRIL" formats
+            (r'(\d{1,2})\s*([A-Za-z]{3,})', '%d %b %Y'),
+            # "26/04/2023", "26-04-2023" formats
             (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', '%d/%m/%Y'),
             # "2023-04-26" format
-            (r'(\d{4})-(\d{1,2})-(\d{1,2})', '%Y-%m-%d')
+            (r'(\d{4})-(\d{1,2})-(\d{1,2})', '%Y-%m-%d'),
+            # RBS specific format: "26APR23"
+            (r'(\d{1,2})([A-Za-z]{3})(\d{2})', '%d%b%y')
         ]
+
+        # Clean the date string
+        date_str = re.sub(r'\s+', ' ', date_str).strip()
 
         for pattern, date_format in date_patterns:
             match = re.match(pattern, date_str)
@@ -58,12 +63,18 @@ def parse_date(date_str):
                 try:
                     if len(match.groups()) == 2:  # Day-Month format
                         day = int(match.group(1))
-                        month = match.group(2)
+                        month = match.group(2)[:3]  # Take first 3 chars of month name
                         current_year = datetime.now().year
                         date_str = f"{day:02d} {month} {current_year}"
                         return datetime.strptime(date_str, '%d %b %Y')
-                    else:  # Full date format
-                        if '/' in date_str or '-' in date_str:
+                    elif len(match.groups()) == 3:  # Full date format
+                        if date_format == '%d%b%y':  # RBS specific format
+                            day = match.group(1)
+                            month = match.group(2)
+                            year = match.group(3)
+                            date_str = f"{day}{month}20{year}"
+                            return datetime.strptime(date_str, '%d%b%Y')
+                        else:
                             # Normalize separators
                             normalized_date = re.sub(r'[/-]', '/', date_str)
                             parts = normalized_date.split('/')
@@ -127,17 +138,19 @@ def process_transaction_rows(table, page_idx, template=None):
                     if row[1].strip():
                         # Clean description based on RBS patterns
                         cleaned_text = row[1].strip()
-                        cleaned_text = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', '', cleaned_text).strip()
+                        cleaned_text = re.sub(r'\b(TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)\b', ' ', cleaned_text).strip()
                         cleaned_text = re.sub(r'\b\d{6,}\b', '', cleaned_text).strip()
-                        details.append(cleaned_text)
+                        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()  # Normalize spaces
+                        if cleaned_text:
+                            details.append(cleaned_text)
                 else:
                     # Default processing
                     if row[1].strip():
                         details.append(row[1].strip())
 
                 # Process amounts with detailed logging
-                withdrawal = clean_amount(row[2])
-                deposit = clean_amount(row[3])
+                withdrawal = clean_amount(row[2]) if len(row) > 2 else ''
+                deposit = clean_amount(row[3]) if len(row) > 3 else ''
                 balance = clean_amount(row[4]) if len(row) > 4 else ''
 
                 logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
@@ -154,7 +167,7 @@ def process_transaction_rows(table, page_idx, template=None):
                     logging.debug(f"Set balance: {balance}")
 
             # Join details
-            transaction['Transaction Details'] = '\n'.join(filter(None, details))
+            transaction['Transaction Details'] = ' '.join(filter(None, details))
             logging.debug(f"Final transaction: {transaction}")
             return transaction
 

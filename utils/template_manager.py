@@ -92,9 +92,13 @@ class TemplateManager:
                         r"Your\s+Account\s+Summary"
                     ],
                     "transaction": [
+                        # Enhanced date patterns for RBS
                         r"\d{1,2}(?:st|nd|rd|th)?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*",
+                        r"\d{1,2}[A-Z]{3}\d{2}",  # e.g., 26APR23
+                        # Transaction codes and types
                         r"(?:PAYMENT|TFR|DD|DR|CR|ATM|POS|BGC|DEB|SO)",
                         r"(?:WITHDRAWAL|DEPOSIT|TRANSFER|STANDING ORDER|DIRECT DEBIT)",
+                        # Date formats
                         r"\d{2}[-/]\d{2}[-/]\d{2,4}"
                     ],
                     "footer": [
