@@ -10,7 +10,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const alertArea = document.getElementById('alertArea');
     const previewSection = document.getElementById('previewSection');
     const previewTableBody = document.getElementById('previewTableBody');
-    const processingPreviewSection = document.getElementById('processingPreviewSection');
 
     // Maximum file size in bytes (16MB)
     const MAX_FILE_SIZE = 16 * 1024 * 1024;
@@ -53,51 +52,6 @@ document.addEventListener('DOMContentLoaded', function() {
         previewBtn.disabled = false;
         downloadBtn.disabled = false;
         showAlert('File ready for preview and conversion!', 'success');
-
-        // Start processing preview
-        showProcessingPreview(file);
-    }
-
-    async function showProcessingPreview(file) {
-        processingPreviewSection.innerHTML = '<h3>Processing Steps</h3><div class="preview-steps"></div>';
-        const previewSteps = processingPreviewSection.querySelector('.preview-steps');
-
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-            const response = await fetch('/process_preview', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Preview processing failed');
-            }
-
-            const data = await response.json();
-
-            // Display processing steps
-            previewSteps.innerHTML = '';
-            data.preview_images.forEach(image => {
-                const stepDiv = document.createElement('div');
-                stepDiv.className = 'processing-step mb-4';
-                stepDiv.innerHTML = `
-                    <h4>${image.step} - Page ${image.page}</h4>
-                    <div class="preview-image">
-                        <img src="/preview_images/${image.path}" alt="${image.step} preview" class="img-fluid">
-                    </div>
-                `;
-                previewSteps.appendChild(stepDiv);
-            });
-
-            processingPreviewSection.classList.remove('d-none');
-
-        } catch (error) {
-            showAlert(error.message);
-            processingPreviewSection.classList.add('d-none');
-        }
     }
 
     function populatePreviewTable(data) {
@@ -120,7 +74,6 @@ document.addEventListener('DOMContentLoaded', function() {
     previewBtn.addEventListener('click', async () => {
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
-        formData.append('force_text_based', 'true');  // Force text-based processing
 
         previewBtn.disabled = true;
         progressBar.classList.remove('d-none');
