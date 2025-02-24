@@ -12,9 +12,3 @@ tomli
 trafilatura
 twilio
 werkzeug
-pdf2image
-pytesseract
-pdf2image
-pytesseract
-PyPDF2
-requests

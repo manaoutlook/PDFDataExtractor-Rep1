@@ -2,7 +2,7 @@ import os
 import logging
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
-from utils.converter import convert_pdf_to_data, convert_pdf
+from utils.converter import convert_pdf, convert_pdf_to_data
 import tempfile
 
 # Configure logging
@@ -28,8 +28,6 @@ def preview_data():
         return jsonify({'error': 'No file part'}), 400
 
     file = request.files['file']
-    pdf_type = request.form.get('pdfType', 'text')
-
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
@@ -43,7 +41,7 @@ def preview_data():
             file.save(pdf_path)
 
             logging.debug(f"Starting preview of {pdf_path}")
-            data = convert_pdf_to_data(pdf_path, pdf_type)
+            data = convert_pdf_to_data(pdf_path)
 
             if not data:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
@@ -61,7 +59,6 @@ def download_file():
 
     file = request.files['file']
     output_format = request.form.get('format', 'excel')
-    pdf_type = request.form.get('pdfType', 'text')
 
     try:
         # Create temporary directory
@@ -70,7 +67,7 @@ def download_file():
             file.save(pdf_path)
 
             logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
-            output_file = convert_pdf(pdf_path, output_format, pdf_type)
+            output_file = convert_pdf(pdf_path, output_format)
 
             if not output_file:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500

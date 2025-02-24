@@ -74,7 +74,6 @@ document.addEventListener('DOMContentLoaded', function() {
     previewBtn.addEventListener('click', async () => {
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
-        formData.append('pdfType', document.querySelector('input[name="pdfType"]:checked').value);
 
         previewBtn.disabled = true;
         progressBar.classList.remove('d-none');
@@ -143,7 +142,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
         formData.append('format', document.querySelector('input[name="format"]:checked').value);
-        formData.append('pdfType', document.querySelector('input[name="pdfType"]:checked').value);
 
         downloadBtn.disabled = true;
         progressBar.classList.remove('d-none');
