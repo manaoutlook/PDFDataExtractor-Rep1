@@ -160,20 +160,32 @@ def preprocess_image(image: Image.Image) -> Image.Image:
 
 def extract_table_data(image: Image.Image) -> List[Dict]:
     """
-    Extract transaction data from image using OCR and positional analysis
+    Extract transaction data from image using OCR and positional analysis with enhanced error handling
     """
     try:
         logging.debug("Starting table data extraction")
 
         # Find table structure
-        header_columns = find_table_header(image)
+        try:
+            header_columns = find_table_header(image)
+        except Exception as header_error:
+            logging.error(f"Error in header detection: {str(header_error)}")
+            return []
 
         # Preprocess image
-        processed_image = preprocess_image(image)
+        try:
+            processed_image = preprocess_image(image)
+        except Exception as preprocess_error:
+            logging.error(f"Image preprocessing failed: {str(preprocess_error)}")
+            return []
 
-        # Configure OCR
-        custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
-        ocr_data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT, config=custom_config)
+        # Configure OCR with error handling
+        try:
+            custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+            ocr_data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT, config=custom_config)
+        except Exception as ocr_error:
+            logging.error(f"OCR processing failed: {str(ocr_error)}")
+            return []
 
         # Group text by lines
         lines = []
@@ -352,7 +364,7 @@ def is_valid_transaction(transaction: Dict) -> bool:
 
 def process_image_based_pdf(pdf_path: str) -> List[Dict]:
     """
-    Process an image-based PDF and extract transaction data.
+    Process an image-based PDF and extract transaction data with robust error handling.
     """
     try:
         logging.info(f"Processing image-based PDF: {pdf_path}")
@@ -367,17 +379,21 @@ def process_image_based_pdf(pdf_path: str) -> List[Dict]:
         for page_num, image in enumerate(images, 1):
             logging.debug(f"Processing page {page_num}")
 
-            # Extract transactions from the page
-            transactions = extract_table_data(image)
+            try:
+                # Extract transactions from the page
+                transactions = extract_table_data(image)
 
-            if transactions:
-                all_transactions.extend(transactions)
-                logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
-            else:
-                logging.warning(f"No transactions found on page {page_num}")
+                if transactions:
+                    all_transactions.extend(transactions)
+                    logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
+                else:
+                    logging.warning(f"No transactions found on page {page_num}")
+            except Exception as page_error:
+                logging.error(f"Error processing page {page_num}: {str(page_error)}")
+                continue  # Continue with next page even if one fails
 
         if not all_transactions:
-            logging.error("No transactions could be extracted from any page")
+            logging.warning("No transactions could be extracted from any page")
             return []
 
         logging.info(f"Successfully extracted {len(all_transactions)} transactions total")

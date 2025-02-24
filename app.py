@@ -58,13 +58,19 @@ def preview_data():
             data = convert_pdf_to_data(pdf_path)
 
             if not data:
-                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
+                return jsonify({
+                    'error': 'Unable to extract data from the PDF. Please ensure it contains transaction data in a table format.',
+                    'details': 'The system could not identify any transaction data in the uploaded file.'
+                }), 422
 
             return jsonify({'data': data})
 
     except Exception as e:
         logging.error(f"Error during preview: {str(e)}")
-        return jsonify({'error': 'An error occurred during preview'}), 500
+        return jsonify({
+            'error': 'An error occurred while processing the file',
+            'details': str(e) if app.debug else 'Please try again or contact support if the issue persists.'
+        }), 500
 
 @app.route('/download', methods=['POST'])
 def download_file():
@@ -84,7 +90,10 @@ def download_file():
             output_file = convert_pdf(pdf_path, output_format)
 
             if not output_file:
-                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
+                return jsonify({
+                    'error': 'Unable to convert the PDF',
+                    'details': 'No transaction data could be extracted from the file.'
+                }), 422
 
             if not os.path.exists(output_file):
                 logging.error(f"Output file not found at {output_file}")
@@ -99,7 +108,10 @@ def download_file():
 
     except Exception as e:
         logging.error(f"Error during conversion: {str(e)}")
-        return jsonify({'error': 'An error occurred during conversion'}), 500
+        return jsonify({
+            'error': 'An error occurred during conversion',
+            'details': str(e) if app.debug else 'Please try again or contact support if the issue persists.'
+        }), 500
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
