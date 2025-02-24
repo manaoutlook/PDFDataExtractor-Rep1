@@ -216,20 +216,42 @@
                     const data = await response.json();
 
                     if (response.ok) {
-                        previewSection.classList.remove('d-none');
-                        previewTableBody.innerHTML = '';
-
-                        data.data.forEach(transaction => {
-                            const row = document.createElement('tr');
-                            row.innerHTML = `
-                                <td>${transaction.Date}</td>
-                                <td>${transaction['Transaction Details']}</td>
-                                <td>${transaction['Withdrawals ($)']}</td>
-                                <td>${transaction['Deposits ($)']}</td>
-                                <td>${transaction['Balance ($)']}</td>
-                            `;
-                            previewTableBody.appendChild(row);
-                        });
+                        if (data.error) {
+                            // Show diagnostic info if available
+                            showAlert(data.error, 'warning');
+                            if (data.diagnostic_info) {
+                                previewSection.classList.remove('d-none');
+                                previewTableBody.innerHTML = `
+                                    <tr>
+                                        <td colspan="5">
+                                            <div class="alert alert-info">
+                                                <h5>Diagnostic Information:</h5>
+                                                <p>Number of pages: ${data.diagnostic_info.num_pages}</p>
+                                                <p>Number of tables found: ${data.diagnostic_info.num_tables}</p>
+                                                <h6>Raw Text Sample:</h6>
+                                                <pre class="bg-dark text-light p-2" style="max-height: 200px; overflow-y: auto;">
+                                                    ${data.diagnostic_info.raw_text.join('\n\n=== Next Page ===\n\n')}
+                                                </pre>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            }
+                        } else {
+                            previewSection.classList.remove('d-none');
+                            previewTableBody.innerHTML = '';
+                            data.data.forEach(transaction => {
+                                const row = document.createElement('tr');
+                                row.innerHTML = `
+                                    <td>${transaction.Date}</td>
+                                    <td>${transaction['Transaction Details']}</td>
+                                    <td>${transaction['Withdrawals ($)']}</td>
+                                    <td>${transaction['Deposits ($)']}</td>
+                                    <td>${transaction['Balance ($)']}</td>
+                                `;
+                                previewTableBody.appendChild(row);
+                            });
+                        }
                     } else {
                         throw new Error(data.error || 'Failed to preview data');
                     }

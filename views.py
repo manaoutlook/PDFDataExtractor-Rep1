@@ -92,22 +92,68 @@ def preview_data():
         return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
 
     try:
-        # Create temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
-            logger.debug(f"Starting preview of {pdf_path}")
+            # First extract and log the raw PDF text
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                raw_text = []
+                for page_num, page in enumerate(pdf_reader.pages):
+                    page_text = page.extract_text()
+                    raw_text.append(page_text)
+                    logger.info(f"Page {page_num + 1} raw text sample: {page_text[:200]}")
+
+            # Try to extract tables first
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=False,
+                lattice=False,
+                stream=True,
+                columns=[70, 250, 350, 450, 550],
+                area=[150, 50, 750, 550],
+                relative_area=False,
+                pandas_options={'header': None}
+            )
+
+            logger.info(f"Number of tables extracted: {len(tables)}")
+            for idx, table in enumerate(tables):
+                logger.info(f"Table {idx + 1} shape: {table.shape}")
+                logger.info(f"Table {idx + 1} sample rows:\n{table.head()}")
+
+            # Now try to convert to structured data
+            logger.info("Attempting to extract structured data...")
             data = convert_pdf_to_data(pdf_path)
 
             if not data:
-                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
+                logger.error("Failed to extract transactions")
+                # Return diagnostic information instead of error
+                return jsonify({
+                    'error': 'No transactions could be extracted from the PDF',
+                    'diagnostic_info': {
+                        'num_pages': len(pdf_reader.pages),
+                        'raw_text': raw_text,
+                        'num_tables': len(tables),
+                        'table_info': [
+                            {
+                                'shape': t.shape,
+                                'sample': t.head().to_dict('records')
+                            } for t in tables
+                        ]
+                    }
+                }), 200  # Return 200 to show the diagnostic info
 
             return jsonify({'data': data})
 
     except Exception as e:
-        logger.error(f"Error during preview: {str(e)}")
-        return jsonify({'error': 'An error occurred during preview'}), 500
+        logger.error(f"Error during preview: {str(e)}", exc_info=True)
+        return jsonify({
+            'error': 'An error occurred during preview',
+            'details': str(e)
+        }), 500
 
 @app.route('/download', methods=['POST'])
 def download_file():
