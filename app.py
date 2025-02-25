@@ -4,6 +4,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from utils.converter import convert_pdf, convert_pdf_to_data
 import tempfile
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -35,13 +36,19 @@ def preview_data():
         return jsonify({'error': 'Invalid file type. Please upload a PDF file.'}), 400
 
     try:
+        # Get selected areas if provided
+        selected_areas = []
+        if 'areas' in request.form:
+            selected_areas = json.loads(request.form['areas'])
+            logging.debug(f"Received selected areas: {selected_areas}")
+
         # Create temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
             logging.debug(f"Starting preview of {pdf_path}")
-            data = convert_pdf_to_data(pdf_path)
+            data = convert_pdf_to_data(pdf_path, selected_areas)
 
             if not data:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
@@ -61,13 +68,19 @@ def download_file():
     output_format = request.form.get('format', 'excel')
 
     try:
+        # Get selected areas if provided
+        selected_areas = []
+        if 'areas' in request.form:
+            selected_areas = json.loads(request.form['areas'])
+            logging.debug(f"Received selected areas for download: {selected_areas}")
+
         # Create temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, secure_filename(file.filename))
             file.save(pdf_path)
 
             logging.debug(f"Starting conversion of {pdf_path} to {output_format}")
-            output_file = convert_pdf(pdf_path, output_format)
+            output_file = convert_pdf(pdf_path, output_format, selected_areas)
 
             if not output_file:
                 return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500

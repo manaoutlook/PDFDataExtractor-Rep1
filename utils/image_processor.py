@@ -350,7 +350,7 @@ def is_valid_transaction(transaction: Dict) -> bool:
     except Exception:
         return False
 
-def process_image_based_pdf(pdf_path: str) -> List[Dict]:
+def process_image_based_pdf(pdf_path: str, selected_areas=None) -> List[Dict]:
     """
     Process an image-based PDF and extract transaction data.
     """
@@ -367,14 +367,33 @@ def process_image_based_pdf(pdf_path: str) -> List[Dict]:
         for page_num, image in enumerate(images, 1):
             logging.debug(f"Processing page {page_num}")
 
-            # Extract transactions from the page
-            transactions = extract_table_data(image)
+            if selected_areas:
+                # Process only selected areas
+                for area in selected_areas:
+                    # Calculate pixel coordinates
+                    x = int(area['x'] * image.width)
+                    y = int(area['y'] * image.height)
+                    width = int(area['width'] * image.width)
+                    height = int(area['height'] * image.height)
 
-            if transactions:
-                all_transactions.extend(transactions)
-                logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
+                    # Crop the image to the selected area
+                    cropped_image = image.crop((x, y, x + width, y + height))
+
+                    # Extract transactions from the cropped area
+                    transactions = extract_table_data(cropped_image)
+
+                    if transactions:
+                        all_transactions.extend(transactions)
+                        logging.debug(f"Extracted {len(transactions)} transactions from selected area on page {page_num}")
             else:
-                logging.warning(f"No transactions found on page {page_num}")
+                # Process the entire page
+                transactions = extract_table_data(image)
+
+                if transactions:
+                    all_transactions.extend(transactions)
+                    logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
+                else:
+                    logging.warning(f"No transactions found on page {page_num}")
 
         if not all_transactions:
             logging.error("No transactions could be extracted from any page")

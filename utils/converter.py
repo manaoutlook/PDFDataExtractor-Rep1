@@ -356,7 +356,7 @@ def process_nationwide_statement(table):
         logging.error(f"Error processing Nationwide statement: {str(e)}")
         return []
 
-def convert_pdf_to_data(pdf_path: str):
+def convert_pdf_to_data(pdf_path: str, selected_areas=None):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
         logging.info(f"Starting data extraction from {pdf_path}")
@@ -369,13 +369,17 @@ def convert_pdf_to_data(pdf_path: str):
         bank_type = detect_bank_statement_type(pdf_path)
         logging.info(f"Detected bank statement type: {bank_type}")
 
+        # Log selected areas if provided
+        if selected_areas:
+            logging.debug(f"Processing with selected areas: {selected_areas}")
+
         # Detect if PDF is image-based
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
         if is_image_pdf:
-            # Process image-based PDF
-            transactions = process_image_based_pdf(pdf_path)
+            # Process image-based PDF with selected areas
+            transactions = process_image_based_pdf(pdf_path, selected_areas)
         else:
             # Configure Java options for headless mode
             java_options = [
@@ -383,18 +387,40 @@ def convert_pdf_to_data(pdf_path: str):
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF
+            # Extract tables from PDF with area restrictions if provided
             logging.debug("Attempting to extract tables from PDF")
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=True,
-                lattice=False,
-                stream=True,
-                pandas_options={'header': None},
-                java_options=java_options
-            )
+            if selected_areas:
+                # Convert relative coordinates to points (assuming 72 DPI)
+                areas = []
+                for area in selected_areas:
+                    areas.append([
+                        area['y'] * 792,  # Standard PDF height
+                        area['x'] * 612,  # Standard PDF width
+                        (area['y'] + area['height']) * 792,
+                        (area['x'] + area['width']) * 612
+                    ])
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages='all',
+                    multiple_tables=True,
+                    guess=True,
+                    area=areas,
+                    lattice=False,
+                    stream=True,
+                    pandas_options={'header': None},
+                    java_options=java_options
+                )
+            else:
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages='all',
+                    multiple_tables=True,
+                    guess=True,
+                    lattice=False,
+                    stream=True,
+                    pandas_options={'header': None},
+                    java_options=java_options
+                )
 
             if not tables:
                 logging.error("No tables extracted from PDF")
@@ -441,11 +467,11 @@ def convert_pdf_to_data(pdf_path: str):
         logging.error(f"Error in data extraction: {str(e)}")
         return None
 
-def convert_pdf(pdf_path: str, output_format: str = 'excel'):
+def convert_pdf(pdf_path: str, output_format: str = 'excel', selected_areas=None):
     """Convert PDF bank statement to Excel/CSV"""
     try:
         # Extract data using the improved processing logic
-        processed_data = convert_pdf_to_data(pdf_path)
+        processed_data = convert_pdf_to_data(pdf_path, selected_areas)
 
         if not processed_data:
             return None

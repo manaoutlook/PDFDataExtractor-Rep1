@@ -23,3 +23,41 @@
 .progress {
     height: 10px;
 }
+
+/* PDF Viewer Styles */
+.pdf-viewer {
+    width: 100%;
+    height: 80vh;
+    overflow: auto;
+    position: relative;
+    background-color: #525659;
+}
+
+.selection-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+.selection-box {
+    position: absolute;
+    border: 2px solid var(--bs-primary);
+    background-color: rgba(var(--bs-primary-rgb), 0.2);
+    pointer-events: none;
+}
+
+#pdfViewerContainer {
+    position: relative;
+    width: 100%;
+    height: 80vh;
+    overflow: hidden;
+}
+
+/* Modal customization for PDF viewer */
+.modal-xl {
+    max-width: 90vw;
+}

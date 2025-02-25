@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+    <!-- Add PDF.js CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
 </head>
 <body>
     <div class="container py-5">
@@ -51,10 +53,37 @@
 
                             <div id="alertArea"></div>
 
-                            <!-- Preview Button -->
-                            <button type="button" class="btn btn-secondary w-100 mb-3" id="previewBtn" disabled>
-                                Preview Data
-                            </button>
+                            <!-- Action Buttons -->
+                            <div class="btn-group w-100 mb-3">
+                                <button type="button" class="btn btn-secondary" id="previewBtn" disabled>
+                                    Preview Data
+                                </button>
+                                <button type="button" class="btn btn-info" id="areaSelectBtn" disabled>
+                                    Area Selection
+                                </button>
+                            </div>
+
+                            <!-- PDF Viewer Modal -->
+                            <div class="modal fade" id="pdfViewerModal" tabindex="-1">
+                                <div class="modal-dialog modal-xl">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Select Table Area</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body p-0">
+                                            <div id="pdfViewerContainer" class="position-relative">
+                                                <div id="pdfViewer" class="pdf-viewer"></div>
+                                                <div id="selectionOverlay" class="selection-overlay"></div>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <button type="button" class="btn btn-primary" id="confirmAreaBtn">Confirm Selection</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
                             <!-- Preview Table Section -->
                             <div id="previewSection" class="mb-3 d-none">
@@ -85,6 +114,9 @@
             </div>
         </div>
     </div>
+    <!-- Add PDF.js scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.js"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
