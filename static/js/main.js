@@ -42,7 +42,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function validateFile(file) {
-        if (!file.type || file.type !== 'application/pdf') {
+        if (!file || !file.type) {
+            showAlert('Invalid file selected.');
+            return false;
+        }
+
+        if (file.type !== 'application/pdf') {
             showAlert('Please upload a PDF file.');
             return false;
         }
@@ -68,127 +73,65 @@ document.addEventListener('DOMContentLoaded', function() {
         showAlert('File ready for processing!', 'success');
     }
 
-    // Prevent default behavior for drag events on the entire document
-    document.addEventListener('dragover', (e) => {
+    // Prevent default drag behaviors on the entire document
+    document.addEventListener('dragover', function(e) {
         e.preventDefault();
-    });
+        e.stopPropagation();
+    }, false);
 
-    document.addEventListener('drop', (e) => {
+    document.addEventListener('drop', function(e) {
         e.preventDefault();
-    });
+        e.stopPropagation();
+    }, false);
 
-    // Drag and drop handlers for dropZone
-    dropZone.addEventListener('dragenter', (e) => {
+    // Handle drag and drop events for the drop zone
+    dropZone.addEventListener('dragenter', function(e) {
         e.preventDefault();
+        e.stopPropagation();
         dropZone.classList.add('drag-over');
-    });
+    }, false);
 
-    dropZone.addEventListener('dragover', (e) => {
+    dropZone.addEventListener('dragover', function(e) {
         e.preventDefault();
+        e.stopPropagation();
         dropZone.classList.add('drag-over');
-    });
+    }, false);
 
-    dropZone.addEventListener('dragleave', (e) => {
+    dropZone.addEventListener('dragleave', function(e) {
         e.preventDefault();
+        e.stopPropagation();
         dropZone.classList.remove('drag-over');
-    });
+    }, false);
 
-    dropZone.addEventListener('drop', (e) => {
+    dropZone.addEventListener('drop', function(e) {
         e.preventDefault();
         e.stopPropagation();
         dropZone.classList.remove('drag-over');
 
-        const file = e.dataTransfer.files[0];
-        if (file) {
-            handleFile(file);
-            // Create a new FileList object
-            const dataTransfer = new DataTransfer();
-            dataTransfer.items.add(file);
-            fileInput.files = dataTransfer.files;
+        const droppedFiles = e.dataTransfer.files;
+        if (droppedFiles.length > 0) {
+            const file = droppedFiles[0];
+            console.log('Dropped file:', file.name, 'Type:', file.type);
+
+            if (validateFile(file)) {
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                handleFile(file);
+            }
         }
+    }, false);
+
+    // Click to upload
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
     });
 
-
-    // PDF Viewer and Selection functionality
-    async function loadPdfIntoViewer(file) {
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            currentPage = await currentPdfDoc.getPage(1);
-
-            const viewport = currentPage.getViewport({ scale: 1.5 });
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            pdfViewer.style.height = `${viewport.height}px`;
-
-            await currentPage.render({
-                canvasContext: context,
-                viewport: viewport
-            }).promise;
-
-            pdfViewer.innerHTML = '';
-            pdfViewer.appendChild(canvas);
-
-            // Clear any existing selections
-            selectionOverlay.innerHTML = '';
-            selectedAreas = [];
-        } catch (error) {
-            showAlert('Error loading PDF: ' + error.message);
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            handleFile(fileInput.files[0]);
         }
-    }
-
-    function startSelection(e) {
-        const rect = pdfViewer.getBoundingClientRect();
-        selectionStart = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-
-        selectionBox = document.createElement('div');
-        selectionBox.className = 'selection-box';
-        selectionOverlay.appendChild(selectionBox);
-
-        document.addEventListener('mousemove', updateSelection);
-        document.addEventListener('mouseup', endSelection);
-    }
-
-    function updateSelection(e) {
-        if (!selectionStart || !selectionBox) return;
-
-        const rect = pdfViewer.getBoundingClientRect();
-        const currentX = e.clientX - rect.left;
-        const currentY = e.clientY - rect.top;
-
-        const left = Math.min(selectionStart.x, currentX);
-        const top = Math.min(selectionStart.y, currentY);
-        const width = Math.abs(currentX - selectionStart.x);
-        const height = Math.abs(currentY - selectionStart.y);
-
-        selectionBox.style.left = `${left}px`;
-        selectionBox.style.top = `${top}px`;
-        selectionBox.style.width = `${width}px`;
-        selectionBox.style.height = `${height}px`;
-    }
-
-    function endSelection() {
-        if (selectionBox) {
-            const rect = selectionBox.getBoundingClientRect();
-            const viewerRect = pdfViewer.getBoundingClientRect();
-
-            selectedAreas.push({
-                x: (rect.left - viewerRect.left) / viewerRect.width,
-                y: (rect.top - viewerRect.top) / viewerRect.height,
-                width: rect.width / viewerRect.width,
-                height: rect.height / viewerRect.height
-            });
-        }
-
-        document.removeEventListener('mousemove', updateSelection);
-        document.removeEventListener('mouseup', endSelection);
-    }
+    });
 
     // Preview functionality
     previewBtn.addEventListener('click', async () => {
@@ -254,7 +197,87 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    async function loadPdfIntoViewer(file) {
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            currentPage = await currentPdfDoc.getPage(1);
+
+            const viewport = currentPage.getViewport({ scale: 1.5 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            pdfViewer.style.height = `${viewport.height}px`;
+
+            await currentPage.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
+
+            pdfViewer.innerHTML = '';
+            pdfViewer.appendChild(canvas);
+
+            // Clear any existing selections
+            selectionOverlay.innerHTML = '';
+            selectedAreas = [];
+        } catch (error) {
+            showAlert('Error loading PDF: ' + error.message);
+        }
+    }
+
     pdfViewer.addEventListener('mousedown', startSelection);
+
+    function startSelection(e) {
+        const rect = pdfViewer.getBoundingClientRect();
+        selectionStart = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+
+        selectionBox = document.createElement('div');
+        selectionBox.className = 'selection-box';
+        selectionOverlay.appendChild(selectionBox);
+
+        document.addEventListener('mousemove', updateSelection);
+        document.addEventListener('mouseup', endSelection);
+    }
+
+    function updateSelection(e) {
+        if (!selectionStart || !selectionBox) return;
+
+        const rect = pdfViewer.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const left = Math.min(selectionStart.x, currentX);
+        const top = Math.min(selectionStart.y, currentY);
+        const width = Math.abs(currentX - selectionStart.x);
+        const height = Math.abs(currentY - selectionStart.y);
+
+        selectionBox.style.left = `${left}px`;
+        selectionBox.style.top = `${top}px`;
+        selectionBox.style.width = `${width}px`;
+        selectionBox.style.height = `${height}px`;
+    }
+
+    function endSelection() {
+        if (selectionBox) {
+            const rect = selectionBox.getBoundingClientRect();
+            const viewerRect = pdfViewer.getBoundingClientRect();
+
+            selectedAreas.push({
+                x: (rect.left - viewerRect.left) / viewerRect.width,
+                y: (rect.top - viewerRect.top) / viewerRect.height,
+                width: rect.width / viewerRect.width,
+                height: rect.height / viewerRect.height
+            });
+        }
+
+        document.removeEventListener('mousemove', updateSelection);
+        document.removeEventListener('mouseup', endSelection);
+    }
 
     confirmAreaBtn.addEventListener('click', () => {
         if (selectedAreas.length > 0) {
@@ -262,18 +285,6 @@ document.addEventListener('DOMContentLoaded', function() {
             pdfViewerModal.hide();
         } else {
             showAlert('Please select at least one area before confirming.');
-        }
-    });
-
-
-    // Click to upload
-    dropZone.addEventListener('click', () => {
-        fileInput.click();
-    });
-
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) {
-            handleFile(fileInput.files[0]);
         }
     });
 

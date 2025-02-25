@@ -24,6 +24,14 @@
     height: 10px;
 }
 
+/* Prevent PDF from opening in new tab */
+.prevent-pdf-open {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
 /* PDF Viewer Styles */
 .pdf-viewer {
     width: 100%;
