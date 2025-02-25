@@ -68,21 +68,46 @@ document.addEventListener('DOMContentLoaded', function() {
         showAlert('File ready for processing!', 'success');
     }
 
-    function populatePreviewTable(data) {
-        previewTableBody.innerHTML = '';
-        data.forEach(transaction => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${transaction.Date}</td>
-                <td>${transaction['Transaction Details']}</td>
-                <td>${transaction['Withdrawals ($)']}</td>
-                <td>${transaction['Deposits ($)']}</td>
-                <td>${transaction['Balance ($)']}</td>
-            `;
-            previewTableBody.appendChild(row);
-        });
-        previewSection.classList.remove('d-none');
-    }
+    // Prevent default behavior for drag events on the entire document
+    document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    document.addEventListener('drop', (e) => {
+        e.preventDefault();
+    });
+
+    // Drag and drop handlers for dropZone
+    dropZone.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            handleFile(file);
+            // Create a new FileList object
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+        }
+    });
+
 
     // PDF Viewer and Selection functionality
     async function loadPdfIntoViewer(file) {
@@ -205,6 +230,22 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    function populatePreviewTable(data) {
+        previewTableBody.innerHTML = '';
+        data.forEach(transaction => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${transaction.Date}</td>
+                <td>${transaction['Transaction Details']}</td>
+                <td>${transaction['Withdrawals ($)']}</td>
+                <td>${transaction['Deposits ($)']}</td>
+                <td>${transaction['Balance ($)']}</td>
+            `;
+            previewTableBody.appendChild(row);
+        });
+        previewSection.classList.remove('d-none');
+    }
+
     // Area Selection functionality
     areaSelectBtn.addEventListener('click', () => {
         if (fileInput.files.length > 0) {
@@ -224,23 +265,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Drag and drop handlers
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('drag-over');
-    });
-
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.classList.remove('drag-over');
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        handleFile(file);
-        fileInput.files = e.dataTransfer.files;
-    });
 
     // Click to upload
     dropZone.addEventListener('click', () => {
