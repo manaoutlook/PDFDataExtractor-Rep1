@@ -15,6 +15,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const pdfViewer = document.getElementById('pdfViewer');
     const selectionOverlay = document.getElementById('selectionOverlay');
     const confirmAreaBtn = document.getElementById('confirmAreaBtn');
+    const prevPageBtn = document.getElementById('prevPage');
+    const nextPageBtn = document.getElementById('nextPage');
+    const currentPageSpan = document.getElementById('currentPage');
+    const totalPagesSpan = document.getElementById('totalPages');
 
     // PDF.js initialization
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -23,6 +27,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const MAX_FILE_SIZE = 16 * 1024 * 1024;
     let currentPdfDoc = null;
     let currentPage = null;
+    let currentPageNum = 1;
     let selectionStart = null;
     let selectionBox = null;
     let selectedAreas = [];
@@ -133,6 +138,135 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    async function renderPage(pageNum) {
+        try {
+            currentPage = await currentPdfDoc.getPage(pageNum);
+            const viewport = currentPage.getViewport({ scale: 1.5 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            await currentPage.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
+
+            pdfViewer.innerHTML = '';
+            pdfViewer.appendChild(canvas);
+            selectionOverlay.innerHTML = '';
+
+            // Update page navigation
+            currentPageNum = pageNum;
+            currentPageSpan.textContent = pageNum;
+            prevPageBtn.disabled = pageNum <= 1;
+            nextPageBtn.disabled = pageNum >= currentPdfDoc.numPages;
+
+        } catch (error) {
+            showAlert('Error rendering page: ' + error.message);
+        }
+    }
+
+    // Area Selection functionality
+    areaSelectBtn.addEventListener('click', async () => {
+        if (fileInput.files.length > 0) {
+            try {
+                const arrayBuffer = await fileInput.files[0].arrayBuffer();
+                currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+                // Update total pages
+                totalPagesSpan.textContent = currentPdfDoc.numPages;
+
+                // Reset selection
+                selectedAreas = [];
+                currentPageNum = 1;
+
+                // Render first page
+                await renderPage(1);
+
+                pdfViewerModal.show();
+            } catch (error) {
+                showAlert('Error loading PDF: ' + error.message);
+            }
+        }
+    });
+
+    // Page navigation
+    prevPageBtn.addEventListener('click', () => {
+        if (currentPageNum > 1) {
+            renderPage(currentPageNum - 1);
+        }
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+        if (currentPageNum < currentPdfDoc.numPages) {
+            renderPage(currentPageNum + 1);
+        }
+    });
+
+    pdfViewer.addEventListener('mousedown', startSelection);
+
+    function startSelection(e) {
+        const rect = pdfViewer.getBoundingClientRect();
+        selectionStart = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+
+        selectionBox = document.createElement('div');
+        selectionBox.className = 'selection-box';
+        selectionOverlay.appendChild(selectionBox);
+
+        document.addEventListener('mousemove', updateSelection);
+        document.addEventListener('mouseup', endSelection);
+    }
+
+    function updateSelection(e) {
+        if (!selectionStart || !selectionBox) return;
+
+        const rect = pdfViewer.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const left = Math.min(selectionStart.x, currentX);
+        const top = Math.min(selectionStart.y, currentY);
+        const width = Math.abs(currentX - selectionStart.x);
+        const height = Math.abs(currentY - selectionStart.y);
+
+        selectionBox.style.left = `${left}px`;
+        selectionBox.style.top = `${top}px`;
+        selectionBox.style.width = `${width}px`;
+        selectionBox.style.height = `${height}px`;
+    }
+
+    function endSelection() {
+        if (selectionBox) {
+            const rect = selectionBox.getBoundingClientRect();
+            const viewerRect = pdfViewer.getBoundingClientRect();
+
+            selectedAreas.push({
+                page: currentPageNum,
+                x: (rect.left - viewerRect.left) / viewerRect.width,
+                y: (rect.top - viewerRect.top) / viewerRect.height,
+                width: rect.width / viewerRect.width,
+                height: rect.height / viewerRect.height
+            });
+        }
+
+        document.removeEventListener('mousemove', updateSelection);
+        document.removeEventListener('mouseup', endSelection);
+    }
+
+    confirmAreaBtn.addEventListener('click', () => {
+        if (selectedAreas.length > 0) {
+            showAlert('Areas selected successfully! Click Preview Data to process the selected areas.', 'success');
+            pdfViewerModal.hide();
+        } else {
+            showAlert('Please select at least one area before confirming.');
+        }
+    });
+
     // Preview functionality
     previewBtn.addEventListener('click', async () => {
         const formData = new FormData();
@@ -188,105 +322,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         previewSection.classList.remove('d-none');
     }
-
-    // Area Selection functionality
-    areaSelectBtn.addEventListener('click', () => {
-        if (fileInput.files.length > 0) {
-            loadPdfIntoViewer(fileInput.files[0]);
-            pdfViewerModal.show();
-        }
-    });
-
-    async function loadPdfIntoViewer(file) {
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            currentPage = await currentPdfDoc.getPage(1);
-
-            const viewport = currentPage.getViewport({ scale: 1.5 });
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            pdfViewer.style.height = `${viewport.height}px`;
-
-            await currentPage.render({
-                canvasContext: context,
-                viewport: viewport
-            }).promise;
-
-            pdfViewer.innerHTML = '';
-            pdfViewer.appendChild(canvas);
-
-            // Clear any existing selections
-            selectionOverlay.innerHTML = '';
-            selectedAreas = [];
-        } catch (error) {
-            showAlert('Error loading PDF: ' + error.message);
-        }
-    }
-
-    pdfViewer.addEventListener('mousedown', startSelection);
-
-    function startSelection(e) {
-        const rect = pdfViewer.getBoundingClientRect();
-        selectionStart = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-
-        selectionBox = document.createElement('div');
-        selectionBox.className = 'selection-box';
-        selectionOverlay.appendChild(selectionBox);
-
-        document.addEventListener('mousemove', updateSelection);
-        document.addEventListener('mouseup', endSelection);
-    }
-
-    function updateSelection(e) {
-        if (!selectionStart || !selectionBox) return;
-
-        const rect = pdfViewer.getBoundingClientRect();
-        const currentX = e.clientX - rect.left;
-        const currentY = e.clientY - rect.top;
-
-        const left = Math.min(selectionStart.x, currentX);
-        const top = Math.min(selectionStart.y, currentY);
-        const width = Math.abs(currentX - selectionStart.x);
-        const height = Math.abs(currentY - selectionStart.y);
-
-        selectionBox.style.left = `${left}px`;
-        selectionBox.style.top = `${top}px`;
-        selectionBox.style.width = `${width}px`;
-        selectionBox.style.height = `${height}px`;
-    }
-
-    function endSelection() {
-        if (selectionBox) {
-            const rect = selectionBox.getBoundingClientRect();
-            const viewerRect = pdfViewer.getBoundingClientRect();
-
-            selectedAreas.push({
-                x: (rect.left - viewerRect.left) / viewerRect.width,
-                y: (rect.top - viewerRect.top) / viewerRect.height,
-                width: rect.width / viewerRect.width,
-                height: rect.height / viewerRect.height
-            });
-        }
-
-        document.removeEventListener('mousemove', updateSelection);
-        document.removeEventListener('mouseup', endSelection);
-    }
-
-    confirmAreaBtn.addEventListener('click', () => {
-        if (selectedAreas.length > 0) {
-            showAlert('Areas selected successfully! Click Preview Data to process the selected areas.', 'success');
-            pdfViewerModal.hide();
-        } else {
-            showAlert('Please select at least one area before confirming.');
-        }
-    });
 
     // Form submission (download)
     uploadForm.addEventListener('submit', async (e) => {
