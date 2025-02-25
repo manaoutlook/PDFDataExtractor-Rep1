@@ -52,76 +52,66 @@ def is_image_based_pdf(pdf_path: str) -> bool:
 
 def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
     """
-    Detect table header row and determine column positions
+    Find table header positions with improved detection
     """
     try:
         logging.debug("Attempting to find table header")
 
-        # Enhance image for header detection
-        header_image = image.crop((0, 0, image.width, int(image.height * 0.2)))
-        enhanced = preprocess_image(header_image)
+        # Enhance image for better OCR
+        enhanced = image.convert('L')  # Convert to grayscale
 
-        # Get OCR data for header
-        custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+        # Perform OCR with specific configuration
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz() "' 
         header_data = pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.DICT, config=custom_config)
 
-        # Find header row
-        header_columns = {}
-        header_texts = []
+        # Common headers with variations
+        common_headers = {
+            'date': ['DATE', 'DAY', 'TRANSACTION DATE'],
+            'description': ['DESCRIPTION', 'DETAILS', 'TRANSACTION', 'PARTICULARS', 'NARRATIVE'],
+            'withdrawals': ['WITHDRAWAL', 'DEBIT', 'OUT', 'DR', 'PAYMENTS', 'AMOUNT'],
+            'deposits': ['DEPOSIT', 'CREDIT', 'IN', 'CR', 'RECEIPTS'],
+            'balance': ['BALANCE', 'BAL', 'RUNNING BAL']
+        }
 
-        # First pass to identify header positions
-        for i in range(len(header_data['text'])):
-            text = header_data['text'][i].upper().strip()
+        found_headers = {}
+        image_width = image.width
+
+        # Process OCR results
+        for i, text in enumerate(header_data['text']):
+            if header_data['conf'][i] < 30:  # Skip low confidence results
+                continue
+
+            text = text.strip().upper()
             if text:
-                header_texts.append(text)
-                x_start = header_data['left'][i]
-                x_end = x_start + header_data['width'][i]
+                for header_type, possible_headers in common_headers.items():
+                    if any(header in text for header in possible_headers):
+                        x_pos = header_data['left'][i]
+                        width = header_data['width'][i]
 
-                if 'DATE' in text:
-                    header_columns['date'] = (0, x_end + 20)
-                elif any(word in text for word in ['TRANSACTION', 'DETAILS', 'DESCRIPTION']):
-                    header_columns['details'] = (x_start - 20, x_end + 20)
-                elif any(word in text for word in ['WITHDRAWAL', 'DEBIT', 'DR']):
-                    header_columns['withdrawals'] = (x_start - 20, x_end + 20)
-                elif any(word in text for word in ['DEPOSIT', 'CREDIT', 'CR']):
-                    header_columns['deposits'] = (x_start - 20, x_end + 20)
-                elif 'BALANCE' in text:
-                    header_columns['balance'] = (x_start - 20, image.width)
+                        # Ensure reasonable column width
+                        if width < 10:
+                            width = 100  # Default minimum width
 
-        logging.debug(f"Found header texts: {header_texts}")
-        logging.debug(f"Detected header columns: {header_columns}")
+                        found_headers[header_type] = (x_pos, min(x_pos + width, image_width))
 
-        # If balance column not found, use last section of the image
-        if 'balance' not in header_columns and header_columns:
-            last_col_end = max(col[1] for col in header_columns.values())
-            header_columns['balance'] = (last_col_end, image.width)
-            logging.debug("Added balance column based on last position")
-
-        if not header_columns:
-            logging.warning("Header detection failed, using default column positions")
-            # Fallback to fixed positions
-            width = image.width
-            header_columns = {
-                'date': (0, int(width * 0.15)),
-                'details': (int(width * 0.15), int(width * 0.6)),
-                'withdrawals': (int(width * 0.6), int(width * 0.75)),
-                'deposits': (int(width * 0.75), int(width * 0.9)),
-                'balance': (int(width * 0.9), width)
+        # If minimal headers not found, try to infer from position
+        if len(found_headers) < 2:
+            # Simple positional inference
+            width_segment = image_width // 5
+            found_headers = {
+                'date': (0, width_segment),
+                'description': (width_segment, width_segment * 3),
+                'withdrawals': (width_segment * 3, width_segment * 4),
+                'deposits': (width_segment * 3, width_segment * 4),
+                'balance': (width_segment * 4, image_width)
             }
 
-        return header_columns
+        logging.debug(f"Detected header columns: {found_headers}")
+        return found_headers
 
     except Exception as e:
-        logging.error(f"Error in header detection: {str(e)}")
-        # Return default column positions
-        width = image.width
-        return {
-            'date': (0, int(width * 0.15)),
-            'details': (int(width * 0.15), int(width * 0.6)),
-            'withdrawals': (int(width * 0.6), int(width * 0.75)),
-            'deposits': (int(width * 0.75), int(width * 0.9)),
-            'balance': (int(width * 0.9), width)
-        }
+        logging.error(f"Error finding table header: {str(e)}")
+        return {}
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
@@ -230,7 +220,7 @@ def extract_table_data(image: Image.Image) -> List[Dict]:
                         if col_name == 'date' and is_date(text):
                             line_data['date'] = text
                             logging.debug(f"Found date: {text}")
-                        elif col_name == 'details':
+                        elif col_name == 'description':
                             line_data['details'].append(text)
                         elif col_name in ['withdrawals', 'deposits', 'balance'] and is_amount(text):
                             line_data[col_name] = clean_amount(text)
