@@ -213,7 +213,7 @@ def is_valid_transaction(transaction: Dict) -> bool:
     try:
         # Allow opening balance entries
         if transaction.get('is_opening_balance') or (
-            'OPENING BALANCE' in transaction['Transaction Details'].upper() and 
+            'OPENING BALANCE' in transaction['Transaction Details'].upper() and
             transaction['Balance ($)']
         ):
             return True
@@ -260,65 +260,98 @@ def process_nationwide_statement(table):
     """Process Nationwide bank statement specific format"""
     try:
         processed_data = []
+        logging.debug(f"Processing Nationwide statement table with shape: {table.shape}")
+        logging.debug(f"Table columns: {table.columns.tolist()}")
+        logging.debug(f"First few rows:\n{table.head()}")
 
-        # Get column indices based on header row
-        header_row = table.iloc[0]
-        date_col = None
-        desc_col = None
-        out_col = None
-        in_col = None
-        bal_col = None
+        # Clean and standardize the table
+        table = table.dropna(how='all').reset_index(drop=True)
 
-        for idx, col in enumerate(header_row):
-            if isinstance(col, str):
-                col_upper = col.upper()
-                if 'DATE' in col_upper:
-                    date_col = idx
-                elif 'DESCRIPTION' in col_upper:
-                    desc_col = idx
-                elif any(x in col_upper for x in ['OUT', '£ OUT', 'WITHDRAWAL']):
-                    out_col = idx
-                elif any(x in col_upper for x in ['IN', '£ IN', 'DEPOSIT']):
-                    in_col = idx
-                elif 'BALANCE' in col_upper:
-                    bal_col = idx
+        # Find the header row
+        header_row_idx = None
+        for idx, row in table.iterrows():
+            row_values = [str(val).strip().upper() for val in row if not pd.isna(val)]
+            row_text = ' '.join(row_values)
+            logging.debug(f"Checking row {idx}: {row_text}")
 
-        # Process data rows
-        for idx in range(1, len(table)):
-            row = table.iloc[idx]
+            if any(keyword in row_text for keyword in ['DATE', 'DESCRIPTION', 'PAYMENTS', 'RECEIPTS', 'BALANCE']):
+                header_row_idx = idx
+                logging.debug(f"Found header row at index {idx}")
+                break
 
-            # Skip empty rows
-            if row.isna().all():
+        if header_row_idx is None:
+            logging.error("Could not find header row in table")
+            return []
+
+        # Set the header and clean the table
+        table.columns = table.iloc[header_row_idx]
+        table = table.iloc[header_row_idx + 1:].reset_index(drop=True)
+
+        # Map columns to standardized names
+        column_mapping = {}
+        for col in table.columns:
+            col_str = str(col).upper()
+            if 'DATE' in col_str:
+                column_mapping[col] = 'Date'
+            elif any(x in col_str for x in ['DESCRIPTION', 'DETAILS', 'TRANSACTION']):
+                column_mapping[col] = 'Description'
+            elif any(x in col_str for x in ['PAYMENT', 'OUT', 'DEBIT', 'WITHDRAWALS']):
+                column_mapping[col] = 'Withdrawals'
+            elif any(x in col_str for x in ['RECEIPT', 'IN', 'CREDIT', 'DEPOSITS']):
+                column_mapping[col] = 'Deposits'
+            elif 'BALANCE' in col_str:
+                column_mapping[col] = 'Balance'
+
+        logging.debug(f"Column mapping: {column_mapping}")
+
+        # Rename columns using the mapping
+        table = table.rename(columns=column_mapping)
+        required_columns = ['Date', 'Description', 'Withdrawals', 'Deposits', 'Balance']
+
+        # Verify we have all required columns
+        missing_columns = [col for col in required_columns if col not in table.columns]
+        if missing_columns:
+            logging.error(f"Missing required columns: {missing_columns}")
+            return []
+
+        # Process each row
+        for idx, row in table.iterrows():
+            try:
+                # Skip rows without any transaction data
+                if row.isna().all():
+                    continue
+
+                # Clean and format the data
+                date = str(row['Date']).strip()
+                details = str(row['Description']).strip()
+                withdrawal = clean_amount(str(row['Withdrawals']))
+                deposit = clean_amount(str(row['Deposits']))
+                balance = clean_amount(str(row['Balance']))
+
+                # Skip non-transaction rows
+                if not date or not details:
+                    continue
+
+                # Create transaction record
+                transaction = {
+                    'Date': date,
+                    'Transaction Details': details,
+                    'Withdrawals ($)': withdrawal,
+                    'Deposits ($)': deposit,
+                    'Balance ($)': balance
+                }
+
+                if is_valid_transaction(transaction):
+                    processed_data.append(transaction)
+                    logging.debug(f"Added transaction: {transaction}")
+
+            except Exception as e:
+                logging.error(f"Error processing row {idx}: {str(e)}")
                 continue
 
-            # Extract data using detected column indices
-            date = str(row[date_col]) if date_col is not None else ''
-            details = str(row[desc_col]) if desc_col is not None else ''
-            withdrawal = str(row[out_col]) if out_col is not None else ''
-            deposit = str(row[in_col]) if in_col is not None else ''
-            balance = str(row[bal_col]) if bal_col is not None else ''
-
-            # Clean up amounts
-            withdrawal = clean_amount(withdrawal)
-            deposit = clean_amount(deposit)
-            balance = clean_amount(balance)
-
-            # Skip non-transaction rows
-            if not any([withdrawal, deposit, balance]) or not details.strip():
-                continue
-
-            transaction = {
-                'Date': date.strip(),
-                'Transaction Details': details.strip(),
-                'Withdrawals ($)': withdrawal,
-                'Deposits ($)': deposit,
-                'Balance ($)': balance
-            }
-
-            if is_valid_transaction(transaction):
-                processed_data.append(transaction)
-
+        logging.info(f"Successfully processed {len(processed_data)} transactions")
         return processed_data
+
     except Exception as e:
         logging.error(f"Error processing Nationwide statement: {str(e)}")
         return []
