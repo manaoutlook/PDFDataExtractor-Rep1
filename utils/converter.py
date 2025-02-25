@@ -267,21 +267,21 @@ def process_nationwide_statement(table):
         # Clean and standardize the table
         table = table.dropna(how='all').reset_index(drop=True)
 
-        # Set default column names for Nationwide format
-        default_columns = ['Date', 'Description', 'Withdrawals', 'Deposits', 'Balance']
-        table.columns = default_columns[:len(table.columns)]
-        
-        # Clean the table
-        table = table.dropna(how='all').reset_index(drop=True)
-        
-        # Remove rows that don't contain valid data
-        table = table[table['Date'].notna() & table['Description'].notna()]
-        
-        if table.empty:
-            logging.error("No valid data found in table after cleaning")
+        # Find the header row
+        header_row_idx = None
+        for idx, row in table.iterrows():
+            row_values = [str(val).strip().upper() for val in row if not pd.isna(val)]
+            row_text = ' '.join(row_values)
+            logging.debug(f"Checking row {idx}: {row_text}")
+
+            if any(keyword in row_text for keyword in ['DATE', 'DESCRIPTION', 'PAYMENTS', 'RECEIPTS', 'BALANCE']):
+                header_row_idx = idx
+                logging.debug(f"Found header row at index {idx}")
+                break
+
+        if header_row_idx is None:
+            logging.error("Could not find header row in table")
             return []
-            
-        logging.debug(f"Cleaned table shape: {table.shape}")
 
         # Set the header and clean the table
         table.columns = table.iloc[header_row_idx]
