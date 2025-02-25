@@ -1,8 +1,6 @@
 import os
 import logging
 from flask import Flask, render_template, request, jsonify, send_file
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import DeclarativeBase
 from werkzeug.utils import secure_filename
 from utils.converter import convert_pdf, convert_pdf_to_data
 import tempfile
@@ -10,20 +8,8 @@ import tempfile
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
-class Base(DeclarativeBase):
-    pass
-
-db = SQLAlchemy(model_class=Base)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET")
-
-# Database Configuration
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_recycle": 300,
-    "pool_pre_ping": True,
-}
-db.init_app(app)
 
 # Configuration
 ALLOWED_EXTENSIONS = {'pdf'}
@@ -55,23 +41,16 @@ def preview_data():
             file.save(pdf_path)
 
             logging.debug(f"Starting preview of {pdf_path}")
+            data = convert_pdf_to_data(pdf_path)
 
-            result = convert_pdf_to_data(pdf_path)
+            if not data:
+                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
 
-            if not result or not result.get('data'):
-                return jsonify({
-                    'error': 'Unable to extract data from the PDF. Please ensure it contains transaction data in a table format.',
-                    'details': 'The system could not identify any transaction data in the uploaded file.'
-                }), 422
-
-            return jsonify(result)
+            return jsonify({'data': data})
 
     except Exception as e:
         logging.error(f"Error during preview: {str(e)}")
-        return jsonify({
-            'error': 'An error occurred while processing the file',
-            'details': str(e) if app.debug else 'Please try again or contact support if the issue persists.'
-        }), 500
+        return jsonify({'error': 'An error occurred during preview'}), 500
 
 @app.route('/download', methods=['POST'])
 def download_file():
@@ -91,10 +70,7 @@ def download_file():
             output_file = convert_pdf(pdf_path, output_format)
 
             if not output_file:
-                return jsonify({
-                    'error': 'Unable to convert the PDF',
-                    'details': 'No transaction data could be extracted from the file.'
-                }), 422
+                return jsonify({'error': 'No transactions could be extracted from the PDF'}), 500
 
             if not os.path.exists(output_file):
                 logging.error(f"Output file not found at {output_file}")
@@ -109,24 +85,11 @@ def download_file():
 
     except Exception as e:
         logging.error(f"Error during conversion: {str(e)}")
-        return jsonify({
-            'error': 'An error occurred during conversion',
-            'details': str(e) if app.debug else 'Please try again or contact support if the issue persists.'
-        }), 500
+        return jsonify({'error': 'An error occurred during conversion'}), 500
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 16MB'}), 413
-
-# Initialize database tables
-with app.app_context():
-    try:
-        logging.info("Initializing database...")
-        import models  # noqa: F401
-        db.create_all()
-        logging.info("Database initialized successfully")
-    except Exception as e:
-        logging.error(f"Error initializing database: {str(e)}")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

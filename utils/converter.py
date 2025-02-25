@@ -36,28 +36,6 @@ def parse_date(date_str):
         if any(word in date_str for word in ['TOTALS', 'BALANCE', 'OPENING']):
             return None
 
-        # Handle various date formats
-        date_formats = [
-            '%d %b %Y',    # 25 Dec 2024
-            '%d-%m-%Y',    # 25-12-2024
-            '%d/%m/%Y',    # 25/12/2024
-            '%d %b',       # 25 Dec
-            '%d-%m',       # 25-12
-            '%d/%m'        # 25/12 
-        ]
-
-        # First try exact date formats
-        for fmt in date_formats:
-            try:
-                # For formats without year, add current year
-                if '%Y' not in fmt:
-                    current_year = datetime.now().year
-                    date_str = f"{date_str} {current_year}"
-                    fmt = f"{fmt} %Y"
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-
         # Handle day and month format (e.g., "26 APR")
         parts = date_str.split()
         if len(parts) == 2:
@@ -65,8 +43,12 @@ def parse_date(date_str):
                 day = int(parts[0])
                 month = parts[1][:3]  # Take first 3 chars of month
                 current_year = datetime.now().year
+                # Handle special case for dates like "31 APR"
+                if month == 'APR' and day == 31:
+                    day = 30
                 date_str = f"{day:02d} {month} {current_year}"
-                return datetime.strptime(date_str, '%d %b %Y')
+                parsed_date = datetime.strptime(date_str, '%d %b %Y')
+                return parsed_date
             except (ValueError, IndexError) as e:
                 logging.debug(f"Date parse error: {e} for {date_str}")
                 return None
@@ -84,13 +66,20 @@ def process_transaction_rows(table, page_idx):
     # Clean the table
     table = table.dropna(how='all').reset_index(drop=True)
 
+    logging.debug(f"Starting to process table on page {page_idx} with {len(table)} rows")
+    logging.debug(f"Table columns: {table.columns}")
+    logging.debug(f"First few rows: {table.head()}")
+
     def process_buffer():
         if not current_buffer:
             return None
 
+        logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
+
         # Get date from first row
         date = parse_date(current_buffer[0][0])
         if not date:
+            logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
             return None
 
         # Initialize transaction
@@ -99,7 +88,9 @@ def process_transaction_rows(table, page_idx):
             'Transaction Details': '',
             'Withdrawals ($)': '',
             'Deposits ($)': '',
-            'Balance ($)': ''
+            'Balance ($)': '',
+            '_page_idx': page_idx,
+            '_row_idx': int(current_buffer[0][-1])
         }
 
         # Process all rows
@@ -108,34 +99,45 @@ def process_transaction_rows(table, page_idx):
             # Add description
             if row[1].strip():
                 details.append(row[1].strip())
+                logging.debug(f"Added description: {row[1].strip()}")
 
-            # Process amounts
+            # Process amounts with detailed logging
             withdrawal = clean_amount(row[2])
             deposit = clean_amount(row[3])
             balance = clean_amount(row[4]) if len(row) > 4 else ''
 
+            logging.debug(f"Processing amounts - W: {withdrawal}, D: {deposit}, B: {balance}")
+
             # Update amounts if not already set
             if withdrawal and not transaction['Withdrawals ($)']:
                 transaction['Withdrawals ($)'] = withdrawal
+                logging.debug(f"Set withdrawal: {withdrawal}")
             if deposit and not transaction['Deposits ($)']:
                 transaction['Deposits ($)'] = deposit
+                logging.debug(f"Set deposit: {deposit}")
             if balance and not transaction['Balance ($)']:
                 transaction['Balance ($)'] = balance
+                logging.debug(f"Set balance: {balance}")
 
         # Join details
         transaction['Transaction Details'] = '\n'.join(filter(None, details))
+        logging.debug(f"Final transaction: {transaction}")
         return transaction
 
     # Process each row
     for idx, row in table.iterrows():
-        # Clean row values
+        # Clean row values and add index
         row_values = [str(val).strip() if not pd.isna(val) else '' for val in row]
+        row_values.append(idx)
+
+        logging.debug(f"Processing row {idx}: {row_values}")
 
         # Skip header rows
         if any(header in row_values[1].upper() for header in [
             'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-            'OPENING', 'TOTALS'
+            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
         ]):
+            logging.debug(f"Skipping header row: {row_values}")
             if current_buffer:
                 trans = process_buffer()
                 if trans:
@@ -143,9 +145,11 @@ def process_transaction_rows(table, page_idx):
                 current_buffer = []
             continue
 
-        # Check for date
+        # Check for date and content
         has_date = bool(parse_date(row_values[0]))
-        has_content = any(val.strip() for val in row_values[1:])
+        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
+
+        logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
         if has_date:
             # Process previous buffer if exists
@@ -157,9 +161,12 @@ def process_transaction_rows(table, page_idx):
 
             # Start new buffer
             current_buffer = [row_values]
+            logging.debug(f"Started new transaction: {row_values}")
+
         elif current_buffer and has_content:
             # Add to current buffer
             current_buffer.append(row_values)
+            logging.debug(f"Added to current transaction: {row_values}")
 
     # Process final buffer
     if current_buffer:
@@ -167,10 +174,23 @@ def process_transaction_rows(table, page_idx):
         if trans:
             processed_data.append(trans)
 
+    # Sort by page and row index
+    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
+
+    # Remove tracking fields
+    for trans in processed_data:
+        trans.pop('_page_idx', None)
+        trans.pop('_row_idx', None)
+
+    # Log results
+    logging.debug(f"Processed {len(processed_data)} transactions")
+    for idx, trans in enumerate(processed_data):
+        logging.debug(f"Transaction {idx}: {trans}")
+
     return processed_data
 
 def convert_pdf_to_data(pdf_path: str):
-    """Extract data from PDF bank statement"""
+    """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
         logging.info(f"Starting data extraction from {pdf_path}")
 
@@ -182,53 +202,65 @@ def convert_pdf_to_data(pdf_path: str):
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
-        transactions = []
         if is_image_pdf:
             # Process image-based PDF
             transactions = process_image_based_pdf(pdf_path)
         else:
+            # Process text-based PDF using existing logic
             # Configure Java options for headless mode
             java_options = [
                 '-Djava.awt.headless=true',
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF with multiple attempts
-            logging.info("Attempting table extraction")
-            try:
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages='all',
-                    multiple_tables=True,
-                    guess=True,
-                    lattice=True,
-                    stream=True,
-                    pandas_options={'header': None},
-                    java_options=java_options
-                )
-                logging.info(f"Successfully extracted {len(tables)} tables from PDF")
+            # Extract tables from PDF
+            logging.debug("Attempting to extract tables from PDF")
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                lattice=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=java_options
+            )
 
-                # Process each table
-                for page_idx, table in enumerate(tables):
-                    logging.info(f"Processing table {page_idx + 1} with {len(table.columns)} columns")
-                    if len(table.columns) >= 4:
-                        table.columns = range(len(table.columns))
-                        page_transactions = process_transaction_rows(table, page_idx)
-                        transactions.extend(page_transactions)
-                        logging.info(f"Extracted {len(page_transactions)} transactions from table {page_idx + 1}")
-                    else:
-                        logging.warning(f"Table {page_idx + 1} has insufficient columns: {len(table.columns)}")
-
-            except Exception as e:
-                logging.error(f"Table extraction failed: {str(e)}")
+            if not tables:
+                logging.error("No tables extracted from PDF")
                 return None
 
+            logging.debug(f"Extracted {len(tables)} tables from PDF")
+
+            transactions = []
+            seen_transactions = set()
+
+            # Process each table
+            for page_idx, table in enumerate(tables):
+                if len(table.columns) >= 4:  # Ensure table has required columns
+                    table.columns = range(len(table.columns))
+                    page_transactions = process_transaction_rows(table, page_idx)
+
+                    # Add unique transactions
+                    for trans in page_transactions:
+                        trans_key = (
+                            trans['Date'],
+                            trans['Transaction Details'],
+                            str(trans['Withdrawals ($)']),
+                            str(trans['Deposits ($)']),
+                            str(trans['Balance ($)'])
+                        )
+
+                        if trans_key not in seen_transactions:
+                            seen_transactions.add(trans_key)
+                            transactions.append(trans)
+
         if not transactions:
-            logging.warning("No transactions extracted")
+            logging.error("No transactions extracted")
             return None
 
         logging.info(f"Successfully extracted {len(transactions)} transactions")
-        return {'data': transactions}
+        return transactions
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
@@ -237,15 +269,14 @@ def convert_pdf_to_data(pdf_path: str):
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     """Convert PDF bank statement to Excel/CSV"""
     try:
-        # Extract data
-        result = convert_pdf_to_data(pdf_path)
+        # Extract data using the improved processing logic
+        processed_data = convert_pdf_to_data(pdf_path)
 
-        if not result or not result.get('data'):
-            logging.error("No data extracted for conversion")
+        if not processed_data:
             return None
 
         # Convert to DataFrame
-        df = pd.DataFrame(result['data'])
+        df = pd.DataFrame(processed_data)
 
         # Create output file
         temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -274,6 +305,9 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                     adjusted_width = (max_length + 2)
                     worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
 
+                # Set wrap text for transaction details
+                for cell in worksheet['B']:
+                    cell.alignment = Alignment(wrapText=True)
         else:
             output_path = f"{temp_file.name}.csv"
             df.to_csv(output_path, index=False)

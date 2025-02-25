@@ -9,149 +9,107 @@ import numpy as np
 import re
 import PyPDF2
 from datetime import datetime
-from .ml_processor import format_detector
+
+logging.basicConfig(level=logging.DEBUG)
 
 def is_image_based_pdf(pdf_path: str) -> bool:
     """
-    Enhanced PDF type detection using both traditional and ML-based approaches
+    Determine if a PDF is image-based by comparing text extraction methods.
+    Returns True if the PDF is primarily image-based, False if it's text-based.
     """
     try:
-        logging.debug(f"Starting enhanced PDF type detection for: {pdf_path}")
+        logging.debug(f"Checking if PDF is image-based: {pdf_path}")
 
-        # ML-based prediction
-        predicted_format = format_detector.predict_format(pdf_path)
-        if predicted_format != "unknown":
-            is_image = predicted_format == "image_based"
-            logging.info(f"ML model predicted format: {'image-based' if is_image else 'text-based'}")
-            return is_image
-
-        # Fallback to traditional detection
-        logging.info("Using traditional detection method as fallback")
+        # First try direct text extraction
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             direct_text = ''
-            for page in pdf_reader.pages[:2]:
+            for page in pdf_reader.pages[:2]:  # Check first two pages
                 direct_text += page.extract_text()
+
+            logging.debug(f"Direct text extraction length: {len(direct_text.strip())}")
 
         # Try OCR on first page
         images = convert_from_path(pdf_path, first_page=1, last_page=1)
         if not images:
             return False
 
+        # Get text from image using OCR
         ocr_text = pytesseract.image_to_string(images[0])
+        logging.debug(f"OCR text extraction length: {len(ocr_text.strip())}")
 
-        # If OCR gets significantly more text than direct extraction, it's likely image-based
-        is_image_based = len(ocr_text.strip()) > len(direct_text.strip()) * 1.5
-        logging.info(f"Traditional detection result: {'image-based' if is_image_based else 'text-based'}")
+        # If OCR gets text but direct extraction doesn't, it's image-based
+        if len(ocr_text.strip()) > 100 and len(direct_text.strip()) < 100:
+            logging.info("PDF appears to be image-based (OCR successful, direct extraction failed)")
+            return True
 
-        return is_image_based
+        logging.info("PDF appears to be text-based")
+        return False
 
     except Exception as e:
-        logging.error(f"Error in PDF type detection: {str(e)}")
+        logging.error(f"Error detecting PDF type: {str(e)}")
         return False
 
 def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
     """
-    Detect table header row and determine column positions with enhanced flexibility
+    Detect table header row and determine column positions
     """
     try:
         logging.debug("Attempting to find table header")
 
-        # Enhance image for header detection with multiple attempts
-        heights = [0.2, 0.3, 0.15]  # Try different heights for header search
-        for height_ratio in heights:
-            # Crop and enhance header section
-            header_image = image.crop((0, 0, image.width, int(image.height * height_ratio)))
-            enhanced = preprocess_image(header_image)
+        # Enhance image for header detection
+        header_image = image.crop((0, 0, image.width, int(image.height * 0.2)))
+        enhanced = preprocess_image(header_image)
 
-            # Get OCR data with different configurations
-            configs = [
-                '--oem 3 --psm 6 -c preserve_interword_spaces=1',
-                '--oem 3 --psm 1 -c preserve_interword_spaces=1',
-                '--oem 3 --psm 3 -c preserve_interword_spaces=1'
-            ]
+        # Get OCR data for header
+        custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+        header_data = pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.DICT, config=custom_config)
 
-            for custom_config in configs:
-                try:
-                    header_data = pytesseract.image_to_data(enhanced, output_type=pytesseract.Output.DICT, config=custom_config)
+        # Find header row
+        header_columns = {}
+        header_texts = []
 
-                    # Find header row
-                    header_columns = {}
-                    header_texts = []
+        # First pass to identify header positions
+        for i in range(len(header_data['text'])):
+            text = header_data['text'][i].upper().strip()
+            if text:
+                header_texts.append(text)
+                x_start = header_data['left'][i]
+                x_end = x_start + header_data['width'][i]
 
-                    # First pass to identify header positions
-                    for i in range(len(header_data['text'])):
-                        text = header_data['text'][i].upper().strip()
-                        if text:
-                            header_texts.append(text)
-                            x_start = header_data['left'][i]
-                            x_end = x_start + header_data['width'][i]
+                if 'DATE' in text:
+                    header_columns['date'] = (0, x_end + 20)
+                elif any(word in text for word in ['TRANSACTION', 'DETAILS', 'DESCRIPTION']):
+                    header_columns['details'] = (x_start - 20, x_end + 20)
+                elif any(word in text for word in ['WITHDRAWAL', 'DEBIT', 'DR']):
+                    header_columns['withdrawals'] = (x_start - 20, x_end + 20)
+                elif any(word in text for word in ['DEPOSIT', 'CREDIT', 'CR']):
+                    header_columns['deposits'] = (x_start - 20, x_end + 20)
+                elif 'BALANCE' in text:
+                    header_columns['balance'] = (x_start - 20, image.width)
 
-                            # More flexible header matching
-                            if any(word in text for word in ['DATE', 'TIME', 'WHEN']):
-                                header_columns['date'] = (0, x_end + 20)
-                            elif any(word in text for word in ['TRANS', 'DETAIL', 'DESC', 'PART', 'NARR']):
-                                header_columns['details'] = (x_start - 20, x_end + 20)
-                            elif any(word in text for word in ['WITH', 'DEBIT', 'DR', 'PAID', 'OUT']):
-                                header_columns['withdrawals'] = (x_start - 20, x_end + 20)
-                            elif any(word in text for word in ['DEP', 'CRED', 'CR', 'RECV', 'IN']):
-                                header_columns['deposits'] = (x_start - 20, x_end + 20)
-                            elif any(word in text for word in ['BAL', 'TOTAL', 'AMT']):
-                                header_columns['balance'] = (x_start - 20, image.width)
+        logging.debug(f"Found header texts: {header_texts}")
+        logging.debug(f"Detected header columns: {header_columns}")
 
-                    # If we found enough columns, use this configuration
-                    if len(header_columns) >= 3:
-                        logging.debug(f"Found header with config: {custom_config}")
-                        logging.debug(f"Header texts: {header_texts}")
-                        logging.debug(f"Detected columns: {header_columns}")
-                        return header_columns
+        # If balance column not found, use last section of the image
+        if 'balance' not in header_columns and header_columns:
+            last_col_end = max(col[1] for col in header_columns.values())
+            header_columns['balance'] = (last_col_end, image.width)
+            logging.debug("Added balance column based on last position")
 
-                except Exception as e:
-                    logging.debug(f"Failed attempt with config {custom_config}: {str(e)}")
-                    continue
-
-        # If no header found, use intelligent column estimation
-        logging.warning("Header detection failed, using intelligent column estimation")
-        # Determine if the statement layout is vertical or horizontal based on text positions
-        try:
-            all_text = pytesseract.image_to_string(image)
-            lines = all_text.split('\n')
-            # Count numbers in different positions to determine layout
-            left_nums = sum(1 for line in lines if line.strip() and line.strip()[0].isdigit())
-            right_nums = sum(1 for line in lines if line.strip() and line.strip()[-1].isdigit())
-
-            if left_nums > right_nums:
-                # Likely vertical layout
-                width = image.width
-                return {
-                    'date': (0, int(width * 0.15)),
-                    'details': (int(width * 0.15), int(width * 0.6)),
-                    'withdrawals': (int(width * 0.6), int(width * 0.75)),
-                    'deposits': (int(width * 0.75), int(width * 0.9)),
-                    'balance': (int(width * 0.9), width)
-                }
-            else:
-                # Likely horizontal layout
-                width = image.width
-                return {
-                    'date': (0, int(width * 0.2)),
-                    'details': (int(width * 0.2), int(width * 0.5)),
-                    'withdrawals': (int(width * 0.5), int(width * 0.7)),
-                    'deposits': (int(width * 0.7), int(width * 0.85)),
-                    'balance': (int(width * 0.85), width)
-                }
-
-        except Exception as layout_error:
-            logging.error(f"Layout detection failed: {str(layout_error)}")
-            # Return default column positions
+        if not header_columns:
+            logging.warning("Header detection failed, using default column positions")
+            # Fallback to fixed positions
             width = image.width
-            return {
+            header_columns = {
                 'date': (0, int(width * 0.15)),
                 'details': (int(width * 0.15), int(width * 0.6)),
                 'withdrawals': (int(width * 0.6), int(width * 0.75)),
                 'deposits': (int(width * 0.75), int(width * 0.9)),
                 'balance': (int(width * 0.9), width)
             }
+
+        return header_columns
 
     except Exception as e:
         logging.error(f"Error in header detection: {str(e)}")
@@ -167,7 +125,7 @@ def find_table_header(image: Image.Image) -> Dict[str, Tuple[int, int]]:
 
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Enhanced image preprocessing with multiple techniques to improve OCR accuracy
+    Apply multiple preprocessing steps to improve OCR accuracy
     """
     try:
         # Convert to grayscale
@@ -184,74 +142,38 @@ def preprocess_image(image: Image.Image) -> Image.Image:
         # Remove noise
         image = image.filter(ImageFilter.MedianFilter(size=3))
 
-        # Apply advanced thresholding
+        # Apply adaptive thresholding
         np_image = np.array(image)
+        block_size = 25
+        C = 5
+        mean = np_image.mean()
+        thresh = mean + C
+        binary = np_image > thresh
 
-        # Try different thresholding techniques
-        try:
-            # Adaptive thresholding
-            block_size = 25
-            C = 5
-            mean = np_image.mean()
-            thresh = mean + C
-            binary = np_image > thresh
-
-            # If adaptive thresholding produces poor results, try Otsu's method
-            if np.sum(binary) < (binary.size * 0.01):  # Less than 1% white pixels
-                # Otsu's thresholding
-                mean = np_image.mean()
-                std = np_image.std()
-                thresh = mean + std
-                binary = np_image > thresh
-
-            # Return processed image
-            processed = Image.fromarray((binary * 255).astype(np.uint8))
-
-            # Additional denoising if needed
-            if np.sum(binary) < (binary.size * 0.05):  # Less than 5% white pixels
-                processed = processed.filter(ImageFilter.MinFilter(3))
-
-            return processed
-
-        except Exception as thresh_error:
-            logging.warning(f"Advanced thresholding failed: {str(thresh_error)}")
-            # Fallback to simple thresholding
-            thresh = np_image.mean() + np_image.std()
-            binary = np_image > thresh
-            return Image.fromarray((binary * 255).astype(np.uint8))
+        # Return processed image
+        processed = Image.fromarray((binary * 255).astype(np.uint8))
+        return processed
 
     except Exception as e:
         logging.error(f"Error in image preprocessing: {str(e)}")
-        return image  # Return original image if processing fails
+        return image
 
 def extract_table_data(image: Image.Image) -> List[Dict]:
     """
-    Extract transaction data from image using OCR and positional analysis with enhanced error handling
+    Extract transaction data from image using OCR and positional analysis
     """
     try:
         logging.debug("Starting table data extraction")
 
         # Find table structure
-        try:
-            header_columns = find_table_header(image)
-        except Exception as header_error:
-            logging.error(f"Error in header detection: {str(header_error)}")
-            return []
+        header_columns = find_table_header(image)
 
         # Preprocess image
-        try:
-            processed_image = preprocess_image(image)
-        except Exception as preprocess_error:
-            logging.error(f"Image preprocessing failed: {str(preprocess_error)}")
-            return []
+        processed_image = preprocess_image(image)
 
-        # Configure OCR with error handling
-        try:
-            custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
-            ocr_data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT, config=custom_config)
-        except Exception as ocr_error:
-            logging.error(f"OCR processing failed: {str(ocr_error)}")
-            return []
+        # Configure OCR
+        custom_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+        ocr_data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT, config=custom_config)
 
         # Group text by lines
         lines = []
@@ -354,10 +276,7 @@ def is_date(text: str) -> bool:
     """Check if text matches date patterns"""
     date_patterns = [
         r'\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)',
-        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',
-        r'\d{1,2}\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)',
-        r'\d{1,2}\s*(?:january|february|march|april|may|june|july|august|september|october|november|december)',
-        r'\d{1,2}\s*(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)'
+        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}'
     ]
     text = text.strip().upper()
     return any(re.match(pattern, text, re.IGNORECASE) for pattern in date_patterns)
@@ -368,8 +287,7 @@ def is_amount(text: str) -> bool:
     amount_patterns = [
         r'^[\$]?\s*-?\d+(?:,\d{3})*(?:\.\d{2})?$',  # Standard format
         r'^[\$]?\s*\(?\d+(?:,\d{3})*(?:\.\d{2})?\)?$',  # Parentheses format
-        r'^[\$]?\s*\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:CR|DR)?$',  # With CR/DR suffix
-        r'^\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?$'  # Standard currency format
+        r'^[\$]?\s*\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:CR|DR)?$'  # With CR/DR suffix
     ]
     text = text.strip()
     return any(re.match(pattern, text) for pattern in amount_patterns)
@@ -434,7 +352,7 @@ def is_valid_transaction(transaction: Dict) -> bool:
 
 def process_image_based_pdf(pdf_path: str) -> List[Dict]:
     """
-    Process an image-based PDF and extract transaction data with robust error handling.
+    Process an image-based PDF and extract transaction data.
     """
     try:
         logging.info(f"Processing image-based PDF: {pdf_path}")
@@ -449,21 +367,17 @@ def process_image_based_pdf(pdf_path: str) -> List[Dict]:
         for page_num, image in enumerate(images, 1):
             logging.debug(f"Processing page {page_num}")
 
-            try:
-                # Extract transactions from the page
-                transactions = extract_table_data(image)
+            # Extract transactions from the page
+            transactions = extract_table_data(image)
 
-                if transactions:
-                    all_transactions.extend(transactions)
-                    logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
-                else:
-                    logging.warning(f"No transactions found on page {page_num}")
-            except Exception as page_error:
-                logging.error(f"Error processing page {page_num}: {str(page_error)}")
-                continue  # Continue with next page even if one fails
+            if transactions:
+                all_transactions.extend(transactions)
+                logging.debug(f"Extracted {len(transactions)} transactions from page {page_num}")
+            else:
+                logging.warning(f"No transactions found on page {page_num}")
 
         if not all_transactions:
-            logging.warning("No transactions could be extracted from any page")
+            logging.error("No transactions could be extracted from any page")
             return []
 
         logging.info(f"Successfully extracted {len(all_transactions)} transactions total")
