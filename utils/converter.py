@@ -389,50 +389,74 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
 
             # Extract tables from PDF with area restrictions if provided
             logging.debug("Attempting to extract tables from PDF")
+
+            # Get PDF dimensions using PyPDF2
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                first_page = pdf_reader.pages[0]
+                # Get actual page dimensions
+                pdf_width = float(first_page.mediabox.width)
+                pdf_height = float(first_page.mediabox.height)
+                logging.debug(f"PDF dimensions: {pdf_width}x{pdf_height}")
+
             if selected_areas:
-                # Convert relative coordinates to points (assuming 72 DPI)
+                # Convert relative coordinates to points using actual PDF dimensions
                 areas = []
                 for area in selected_areas:
-                    areas.append([
-                        area['y'] * 792,  # Standard PDF height
-                        area['x'] * 612,  # Standard PDF width
-                        (area['y'] + area['height']) * 792,
-                        (area['x'] + area['width']) * 612
-                    ])
+                    # Convert relative coordinates to actual points
+                    x1 = area['x'] * pdf_width
+                    y1 = area['y'] * pdf_height
+                    x2 = (area['x'] + area['width']) * pdf_width
+                    y2 = (area['y'] + area['height']) * pdf_height
+
+                    # Tabula uses top-left as origin, but y-axis is inverted
+                    area_coords = [
+                        pdf_height - y2,  # top (inverted)
+                        x1,              # left
+                        pdf_height - y1, # bottom (inverted)
+                        x2               # right
+                    ]
+                    areas.append(area_coords)
+                    logging.debug(f"Converted area coordinates: {area_coords}")
+
                 tables = tabula.read_pdf(
                     pdf_path,
                     pages='all',
                     multiple_tables=True,
                     guess=True,
                     area=areas,
-                    lattice=False,
+                    relative_area=False,  # We're providing absolute coordinates
+                    lattice=True,        # Try both lattice and stream modes
                     stream=True,
                     pandas_options={'header': None},
                     java_options=java_options
                 )
+                logging.debug(f"Extracted {len(tables)} tables using selected areas")
             else:
                 tables = tabula.read_pdf(
                     pdf_path,
                     pages='all',
                     multiple_tables=True,
                     guess=True,
-                    lattice=False,
+                    lattice=True,
                     stream=True,
                     pandas_options={'header': None},
                     java_options=java_options
                 )
+                logging.debug(f"Extracted {len(tables)} tables without area selection")
 
             if not tables:
                 logging.error("No tables extracted from PDF")
                 return None
-
-            logging.debug(f"Extracted {len(tables)} tables from PDF")
 
             transactions = []
             seen_transactions = set()
 
             # Process each table
             for page_idx, table in enumerate(tables):
+                logging.debug(f"Processing table {page_idx} with shape: {table.shape}")
+                logging.debug(f"Table contents:\n{table.head()}")
+
                 if len(table.columns) >= 4:  # Ensure table has required columns
                     table.columns = range(len(table.columns))
 
@@ -455,6 +479,7 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
                             if trans_key not in seen_transactions:
                                 seen_transactions.add(trans_key)
                                 transactions.append(trans)
+                                logging.debug(f"Added transaction: {trans}")
 
         if not transactions:
             logging.error("No transactions extracted")
