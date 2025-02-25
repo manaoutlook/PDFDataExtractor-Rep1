@@ -7,8 +7,9 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
-from typing import Dict
+from typing import Dict, List
 import PyPDF2
+import re
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -326,6 +327,117 @@ def process_nationwide_statement(table):
         logging.error(f"Error processing Nationwide statement: {str(e)}")
         return []
 
+def extract_text_from_area(pdf_path: str, selected_area: Dict) -> str:
+    """Extract text from a specific area of a PDF page"""
+    try:
+        logging.info(f"Extracting text from selected area: {selected_area}")
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            page = reader.pages[selected_area.get('page', 0) - 1]
+
+            # Get page dimensions
+            page_width = float(page.mediabox.width)
+            page_height = float(page.mediabox.height)
+
+            # Convert relative coordinates to points
+            x1 = selected_area['x'] * page_width
+            y1 = (1 - selected_area['y'] - selected_area['height']) * page_height
+            x2 = (selected_area['x'] + selected_area['width']) * page_width
+            y2 = (1 - selected_area['y']) * page_height
+
+            # Extract text from the area
+            crop = {
+                '/CropBox': [x1, y1, x2, y2],
+            }
+            page.cropbox = PyPDF2.generic.RectangleObject(crop['/CropBox'])
+            text = page.extract_text()
+            logging.debug(f"Extracted text from area:\n{text}")
+            return text
+    except Exception as e:
+        logging.error(f"Error extracting text from area: {str(e)}")
+        return ""
+
+def parse_text_to_transactions(text: str) -> List[Dict]:
+    """Parse extracted text into transactions"""
+    try:
+        transactions = []
+        current_transaction = None
+        lines = text.split('\n')
+
+        # Date pattern matching
+        date_pattern = re.compile(r'(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)', re.IGNORECASE)
+        amount_pattern = re.compile(r'\$?\s*-?\d+(?:,\d{3})*(?:\.\d{2})?')
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            logging.debug(f"Processing line: {line}")
+
+            # Check for date at start of line
+            date_match = date_pattern.search(line)
+
+            if date_match:
+                # If we found a date, start a new transaction
+                if current_transaction and is_valid_transaction(current_transaction):
+                    transactions.append(current_transaction)
+
+                # Initialize new transaction
+                current_transaction = {
+                    'Date': date_match.group().strip(),
+                    'Transaction Details': line[date_match.end():].strip(),
+                    'Withdrawals ($)': '',
+                    'Deposits ($)': '',
+                    'Balance ($)': ''
+                }
+
+                # Look for amounts in the rest of the line
+                amounts = amount_pattern.findall(line[date_match.end():])
+                if amounts:
+                    for amount in amounts:
+                        amount = clean_amount(amount)
+                        if amount:
+                            if float(amount) < 0:
+                                current_transaction['Withdrawals ($)'] = str(abs(float(amount)))
+                            else:
+                                current_transaction['Deposits ($)'] = amount
+
+            elif current_transaction:
+                # Continue with current transaction
+                amounts = amount_pattern.findall(line)
+                details = line
+
+                # Remove amount strings from details
+                for amount in amounts:
+                    details = details.replace(amount, '').strip()
+
+                if details:
+                    current_transaction['Transaction Details'] += ' ' + details
+
+                # Process amounts
+                if amounts and not any([current_transaction['Withdrawals ($)'], 
+                                      current_transaction['Deposits ($)'], 
+                                      current_transaction['Balance ($)']]):
+                    for amount in amounts:
+                        amount = clean_amount(amount)
+                        if amount:
+                            if float(amount) < 0:
+                                current_transaction['Withdrawals ($)'] = str(abs(float(amount)))
+                            else:
+                                current_transaction['Deposits ($)'] = amount
+
+        # Add the last transaction
+        if current_transaction and is_valid_transaction(current_transaction):
+            transactions.append(current_transaction)
+
+        logging.info(f"Parsed {len(transactions)} transactions from text")
+        return transactions
+
+    except Exception as e:
+        logging.error(f"Error parsing text to transactions: {str(e)}")
+        return []
+
 def extract_tables_from_pdf(pdf_path, selected_areas=None, java_options=None):
     """Extract tables from PDF using both lattice and stream methods"""
     try:
@@ -415,77 +527,36 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
             logging.error("PDF file not found")
             return None
 
-        # Get PDF dimensions and process selected areas
-        with open(pdf_path, 'rb') as pdf_file:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            first_page = pdf_reader.pages[0]
-            pdf_width = float(first_page.mediabox.width)
-            pdf_height = float(first_page.mediabox.height)
-            logging.debug(f"PDF dimensions: {pdf_width}x{pdf_height}")
+        all_transactions = []
 
-        # Process selected areas if provided
-        area_coordinates = []
         if selected_areas:
-            logging.debug(f"Processing selected areas: {selected_areas}")
+            # Process each selected area
             for area in selected_areas:
-                # Convert relative coordinates to points
-                x1 = area['x'] * pdf_width
-                y1 = area['y'] * pdf_height
-                x2 = (area['x'] + area['width']) * pdf_width
-                y2 = (area['y'] + area['height']) * pdf_height
+                # Extract text from the selected area
+                text = extract_text_from_area(pdf_path, area)
+                if text:
+                    # Parse the extracted text into transactions
+                    transactions = parse_text_to_transactions(text)
+                    if transactions:
+                        all_transactions.extend(transactions)
 
-                # Store coordinates with page information
-                area_coords = {
-                    'page': area.get('page', 1),
-                    'coords': [y1, x1, y2, x2]  # tabula format: [top, left, bottom, right]
-                }
-                area_coordinates.append(area_coords)
-                logging.debug(f"Converted coordinates for page {area_coords['page']}: {area_coords['coords']}")
+        if not all_transactions:
+            logging.warning("No transactions found in selected areas, trying full page extraction")
+            # Fallback to original table extraction method
+            tables = extract_tables_from_pdf(pdf_path, selected_areas)
+            if tables:
+                for table in tables:
+                    if len(table.columns) >= 4:
+                        table.columns = range(len(table.columns))
+                        transactions = process_transaction_rows(table, 1)
+                        all_transactions.extend([t for t in transactions if is_valid_transaction(t)])
 
-        # Configure Java options
-        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-
-        # Extract tables from PDF
-        tables = extract_tables_from_pdf(pdf_path, area_coordinates, java_options)
-        if not tables:
-            logging.error("No tables extracted from PDF")
-            return None
-
-        transactions = []
-        seen_transactions = set()
-
-        # Process each table
-        for table in tables:
-            page_num = table.attrs.get('page_number', 1)
-            logging.debug(f"Processing table from page {page_num}")
-            logging.debug(f"Table shape: {table.shape}")
-            logging.debug(f"Table preview:\n{table.head()}")
-
-            if len(table.columns) >= 4:  # Basic validation
-                table.columns = range(len(table.columns))
-                page_transactions = process_transaction_rows(table, page_num)
-
-                # Add unique transactions
-                for trans in page_transactions:
-                    if is_valid_transaction(trans):
-                        trans_key = (
-                            trans['Date'],
-                            trans['Transaction Details'],
-                            str(trans['Withdrawals ($)']),
-                            str(trans['Deposits ($)']),
-                            str(trans['Balance ($)'])
-                        )
-                        if trans_key not in seen_transactions:
-                            seen_transactions.add(trans_key)
-                            transactions.append(trans)
-                            logging.debug(f"Added transaction: {trans}")
-
-        if not transactions:
+        if not all_transactions:
             logging.error("No valid transactions could be extracted")
             return None
 
-        logging.info(f"Successfully extracted {len(transactions)} transactions")
-        return transactions
+        logging.info(f"Successfully extracted {len(all_transactions)} transactions")
+        return all_transactions
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
