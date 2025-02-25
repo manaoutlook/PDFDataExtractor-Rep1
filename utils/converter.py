@@ -359,45 +359,53 @@ def process_nationwide_statement(table):
 def extract_tables_from_pdf(pdf_path, selected_areas=None, java_options=None):
     """Extract tables from PDF using both lattice and stream methods"""
     try:
-        all_tables = []
-        methods = ['lattice', 'stream']
+        logging.info(f"Starting table extraction from {pdf_path}")
+        if selected_areas:
+            logging.info(f"Using selected areas: {selected_areas}")
 
-        for method in methods:
-            try:
-                if selected_areas:
-                    tables = tabula.read_pdf(
-                        pdf_path,
-                        pages='all',
-                        multiple_tables=True,
-                        guess=True,
-                        area=selected_areas,
-                        relative_area=False,
-                        lattice=(method == 'lattice'),
-                        stream=(method == 'stream'),
-                        pandas_options={'header': None},
-                        java_options=java_options
-                    )
-                else:
-                    tables = tabula.read_pdf(
-                        pdf_path,
-                        pages='all',
-                        multiple_tables=True,
-                        guess=True,
-                        lattice=(method == 'lattice'),
-                        stream=(method == 'stream'),
-                        pandas_options={'header': None},
-                        java_options=java_options
-                    )
+        # Try direct extraction first without area selection
+        tables = tabula.read_pdf(
+            pdf_path,
+            pages='all',
+            multiple_tables=True,
+            guess=True,
+            stream=True,
+            pandas_options={'header': None},
+            java_options=java_options
+        )
 
-                if tables:
-                    all_tables.extend(tables)
-                    logging.debug(f"Extracted {len(tables)} tables using {method} method")
+        if tables:
+            logging.info(f"Successfully extracted {len(tables)} tables without area selection")
+            for idx, table in enumerate(tables):
+                logging.debug(f"Table {idx} shape: {table.shape}")
+                logging.debug(f"Table {idx} preview:\n{table.head()}")
+            return tables
 
-            except Exception as e:
-                logging.error(f"Error extracting tables with {method} method: {str(e)}")
-                continue
+        # If no tables found, try with area selection
+        if selected_areas:
+            logging.info("Attempting extraction with selected areas")
+            tables = tabula.read_pdf(
+                pdf_path,
+                pages='all',
+                multiple_tables=True,
+                guess=True,
+                area=selected_areas,
+                relative_area=False,
+                stream=True,
+                pandas_options={'header': None},
+                java_options=java_options
+            )
 
-        return all_tables
+            if tables:
+                logging.info(f"Successfully extracted {len(tables)} tables with area selection")
+                for idx, table in enumerate(tables):
+                    logging.debug(f"Table {idx} shape: {table.shape}")
+                    logging.debug(f"Table {idx} preview:\n{table.head()}")
+                return tables
+
+        logging.error("No tables could be extracted using any method")
+        return []
+
     except Exception as e:
         logging.error(f"Error in table extraction: {str(e)}")
         return []
@@ -411,51 +419,35 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
             logging.error("PDF file not found")
             return None
 
-        # Detect bank statement type
-        bank_type = detect_bank_statement_type(pdf_path)
-        logging.info(f"Detected bank statement type: {bank_type}")
+        # Configure Java options for headless mode
+        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
 
-        # Log selected areas if provided
-        if selected_areas:
-            logging.debug(f"Processing with selected areas: {selected_areas}")
+        # Try extraction without coordinate transformation first
+        tables = extract_tables_from_pdf(pdf_path, None, java_options)
 
-        # Get PDF dimensions using PyPDF2
-        with open(pdf_path, 'rb') as pdf_file:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
-            first_page = pdf_reader.pages[0]
-            pdf_width = float(first_page.mediabox.width)
-            pdf_height = float(first_page.mediabox.height)
-            logging.debug(f"PDF dimensions: {pdf_width}x{pdf_height}")
+        if not tables and selected_areas:
+            # If no tables found, try with selected areas
+            with open(pdf_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                first_page = pdf_reader.pages[0]
+                pdf_width = float(first_page.mediabox.width)
+                pdf_height = float(first_page.mediabox.height)
+                logging.debug(f"PDF dimensions: {pdf_width}x{pdf_height}")
 
-        # Convert selected areas to absolute coordinates
-        area_coordinates = None
-        if selected_areas:
+            # Convert selected areas to coordinates
             area_coordinates = []
             for area in selected_areas:
-                # Convert relative coordinates to actual points
+                # Calculate pixel coordinates
                 x1 = area['x'] * pdf_width
                 y1 = area['y'] * pdf_height
                 x2 = (area['x'] + area['width']) * pdf_width
                 y2 = (area['y'] + area['height']) * pdf_height
 
-                # Tabula uses top-left as origin, but y-axis is inverted
-                area_coords = [
-                    pdf_height - y2,  # top (inverted)
-                    x1,              # left
-                    pdf_height - y1, # bottom (inverted)
-                    x2               # right
-                ]
+                area_coords = [y1, x1, y2, x2]  # Simple coordinate mapping
                 area_coordinates.append(area_coords)
-                logging.debug(f"Converted area coordinates: {area_coords}")
+                logging.debug(f"Area coordinates: {area_coords}")
 
-        # Configure Java options for headless mode
-        java_options = [
-            '-Djava.awt.headless=true',
-            '-Dfile.encoding=UTF8'
-        ]
-
-        # Extract tables from PDF
-        tables = extract_tables_from_pdf(pdf_path, area_coordinates, java_options)
+            tables = extract_tables_from_pdf(pdf_path, area_coordinates, java_options)
 
         if not tables:
             logging.error("No tables extracted from PDF")
@@ -466,34 +458,27 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
 
         # Process each table
         for page_idx, table in enumerate(tables):
-            logging.debug(f"Processing table {page_idx} with shape: {table.shape}")
-            logging.debug(f"Table contents:\n{table.head()}")
-
-            if len(table.columns) >= 4:  # Ensure table has required columns
+            if len(table.columns) >= 4:  # Basic validation
                 table.columns = range(len(table.columns))
+                page_transactions = process_transaction_rows(table, page_idx)
 
-                # Use specific processing for Nationwide statements
-                if bank_type == 'nationwide':
-                    page_transactions = process_nationwide_statement(table)
-                else:
-                    page_transactions = process_transaction_rows(table, page_idx)
-
-                # Add unique transactions and filter invalid ones
+                # Add unique transactions
                 for trans in page_transactions:
-                    trans_key = (
-                        trans['Date'],
-                        trans['Transaction Details'],
-                        str(trans['Withdrawals ($)']),
-                        str(trans['Deposits ($)']),
-                        str(trans['Balance ($)'])
-                    )
-                    if trans_key not in seen_transactions:
-                        seen_transactions.add(trans_key)
-                        transactions.append(trans)
-                        logging.debug(f"Added transaction: {trans}")
+                    if is_valid_transaction(trans):
+                        trans_key = (
+                            trans['Date'],
+                            trans['Transaction Details'],
+                            str(trans['Withdrawals ($)']),
+                            str(trans['Deposits ($)']),
+                            str(trans['Balance ($)'])
+                        )
+                        if trans_key not in seen_transactions:
+                            seen_transactions.add(trans_key)
+                            transactions.append(trans)
+                            logging.debug(f"Added transaction: {trans}")
 
         if not transactions:
-            logging.error("No transactions extracted")
+            logging.error("No transactions could be extracted")
             return None
 
         logging.info(f"Successfully extracted {len(transactions)} transactions")
