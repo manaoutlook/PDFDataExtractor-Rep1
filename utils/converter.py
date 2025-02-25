@@ -331,7 +331,7 @@ def extract_text_from_area(pdf_path: str, selected_area: Dict) -> str:
     """Extract text from a specific area of a PDF page"""
     try:
         logging.info(f"Extracting text from selected area: {selected_area}")
-        
+
         # Use tabula to extract tables from the specific area
         area = [
             selected_area['y'] * 100,  # top
@@ -339,7 +339,7 @@ def extract_text_from_area(pdf_path: str, selected_area: Dict) -> str:
             (selected_area['y'] + selected_area['height']) * 100,  # bottom
             (selected_area['x'] + selected_area['width']) * 100  # right
         ]
-        
+
         tables = tabula.read_pdf(
             pdf_path,
             pages=selected_area.get('page', 1),
@@ -349,15 +349,15 @@ def extract_text_from_area(pdf_path: str, selected_area: Dict) -> str:
             guess=False,
             pandas_options={'header': None}
         )
-        
+
         if not tables:
             return ""
-            
+
         # Convert table to text
         text = ""
         for table in tables:
             text += table.to_string(index=False, header=False) + "\n"
-            
+
         logging.debug(f"Extracted text from area:\n{text}")
         return text
     except Exception as e:
@@ -468,7 +468,15 @@ def extract_tables_from_pdf(pdf_path, selected_areas=None, java_options=None):
             page_areas = None
             if selected_areas:
                 # Filter areas for current page
-                page_areas = [area['coords'] for area in selected_areas if area.get('page', 1) == page_num]
+                page_areas = [
+                    [
+                        area['y'] * 100,  # top
+                        area['x'] * 100,  # left
+                        (area['y'] + area['height']) * 100,  # bottom
+                        (area['x'] + area['width']) * 100  # right
+                    ]
+                    for area in selected_areas if area.get('page', 1) == page_num
+                ]
                 if not page_areas:
                     logging.debug(f"No selected areas for page {page_num}")
                     continue
