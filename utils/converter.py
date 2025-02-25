@@ -7,6 +7,7 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
+from typing import Dict
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -76,21 +77,25 @@ def process_transaction_rows(table, page_idx):
 
         logging.debug(f"Processing buffer with {len(current_buffer)} rows: {current_buffer}")
 
+        # Check for opening balance
+        is_opening_balance = any('OPENING BALANCE' in row[1].upper() for row in current_buffer)
+
         # Get date from first row
-        date = parse_date(current_buffer[0][0])
-        if not date:
+        date = parse_date(current_buffer[0][0]) if not is_opening_balance else datetime.now()
+        if not date and not is_opening_balance:
             logging.debug(f"Failed to parse date from: {current_buffer[0][0]}")
             return None
 
         # Initialize transaction
         transaction = {
-            'Date': date.strftime('%d %b'),
+            'Date': date.strftime('%d %b') if not is_opening_balance else 'Opening Balance',
             'Transaction Details': '',
             'Withdrawals ($)': '',
             'Deposits ($)': '',
             'Balance ($)': '',
             '_page_idx': page_idx,
-            '_row_idx': int(current_buffer[0][-1])
+            '_row_idx': int(current_buffer[0][-1]),
+            'is_opening_balance': is_opening_balance
         }
 
         # Process all rows
@@ -132,10 +137,13 @@ def process_transaction_rows(table, page_idx):
 
         logging.debug(f"Processing row {idx}: {row_values}")
 
-        # Skip header rows
-        if any(header in row_values[1].upper() for header in [
+        # Check for opening balance
+        is_opening = 'OPENING BALANCE' in row_values[1].upper()
+
+        # Skip non-opening balance header rows
+        if not is_opening and any(header in row_values[1].upper() for header in [
             'TRANSACTION DETAILS', 'WITHDRAWALS', 'DEPOSITS', 'BALANCE',
-            'OPENING', 'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
+            'TOTALS AT END OF PAGE', 'TOTALS FOR PERIOD'
         ]):
             logging.debug(f"Skipping header row: {row_values}")
             if current_buffer:
@@ -145,13 +153,22 @@ def process_transaction_rows(table, page_idx):
                 current_buffer = []
             continue
 
+        # Always start a new buffer for opening balance
+        if is_opening:
+            if current_buffer:
+                trans = process_buffer()
+                if trans:
+                    processed_data.append(trans)
+            current_buffer = [row_values]
+            continue
+
         # Check for date and content
         has_date = bool(parse_date(row_values[0]))
-        has_content = any(val.strip() for val in row_values[1:5])  # Include amount columns in content check
+        has_content = any(val.strip() for val in row_values[1:5])
 
         logging.debug(f"Row analysis - has_date: {has_date}, has_content: {has_content}")
 
-        if has_date:
+        if has_date and not is_opening:
             # Process previous buffer if exists
             if current_buffer:
                 trans = process_buffer()
@@ -174,13 +191,14 @@ def process_transaction_rows(table, page_idx):
         if trans:
             processed_data.append(trans)
 
-    # Sort by page and row index
-    processed_data.sort(key=lambda x: (x['_page_idx'], x['_row_idx']))
+    # Sort by page and row index, keeping opening balance at the top
+    processed_data.sort(key=lambda x: (not x.get('is_opening_balance', False), x['_page_idx'], x['_row_idx']))
 
     # Remove tracking fields
     for trans in processed_data:
         trans.pop('_page_idx', None)
         trans.pop('_row_idx', None)
+        trans.pop('is_opening_balance', None)
 
     # Log results
     logging.debug(f"Processed {len(processed_data)} transactions")
@@ -188,6 +206,40 @@ def process_transaction_rows(table, page_idx):
         logging.debug(f"Transaction {idx}: {trans}")
 
     return processed_data
+
+def is_valid_transaction(transaction: Dict) -> bool:
+    """Validate transaction data"""
+    try:
+        # Allow opening balance entries
+        if transaction.get('is_opening_balance') or (
+            'OPENING BALANCE' in transaction['Transaction Details'].upper() and 
+            transaction['Balance ($)']
+        ):
+            return True
+
+        # Must have date and some content
+        if not transaction['Date']:
+            return False
+
+        # Must have some details or amounts
+        has_content = any([
+            transaction['Transaction Details'],
+            transaction['Withdrawals ($)'],
+            transaction['Deposits ($)'],
+            transaction['Balance ($)']
+        ])
+        if not has_content:
+            return False
+
+        # Skip other header/footer rows
+        skip_words = ['closing', 'balance brought', 'balance carried', 'total']
+        details_lower = transaction['Transaction Details'].lower()
+        if any(word in details_lower for word in skip_words):
+            return False
+
+        return True
+    except Exception:
+        return False
 
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
@@ -241,19 +293,19 @@ def convert_pdf_to_data(pdf_path: str):
                     table.columns = range(len(table.columns))
                     page_transactions = process_transaction_rows(table, page_idx)
 
-                    # Add unique transactions
+                    # Add unique transactions and filter invalid ones
                     for trans in page_transactions:
-                        trans_key = (
-                            trans['Date'],
-                            trans['Transaction Details'],
-                            str(trans['Withdrawals ($)']),
-                            str(trans['Deposits ($)']),
-                            str(trans['Balance ($)'])
-                        )
-
-                        if trans_key not in seen_transactions:
-                            seen_transactions.add(trans_key)
-                            transactions.append(trans)
+                        if is_valid_transaction(trans):
+                            trans_key = (
+                                trans['Date'],
+                                trans['Transaction Details'],
+                                str(trans['Withdrawals ($)']),
+                                str(trans['Deposits ($)']),
+                                str(trans['Balance ($)'])
+                            )
+                            if trans_key not in seen_transactions:
+                                seen_transactions.add(trans_key)
+                                transactions.append(trans)
 
         if not transactions:
             logging.error("No transactions extracted")
