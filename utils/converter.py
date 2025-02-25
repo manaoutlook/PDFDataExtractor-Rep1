@@ -221,14 +221,14 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
-        # Detect format and bank using ML
-        detection_result = format_detector.predict_format(pdf_path) if format_detector else {
-            "format": "unknown",
-            "bank": "Unknown",
-            "confidence": 0.0
-        }
-
-        logging.info(f"Detection result: {detection_result}")
+        # Detect format and bank using ML - but don't let ML errors stop processing
+        try:
+            detection_result = format_detector.predict_format(pdf_path) if format_detector else None
+            if detection_result:
+                logging.info(f"Detection result: {detection_result}")
+        except Exception as e:
+            logging.warning(f"Bank detection failed (non-critical): {str(e)}")
+            detection_result = None
 
         # Detect if PDF is image-based
         is_image_pdf = is_image_based_pdf(pdf_path)
@@ -301,11 +301,23 @@ def convert_pdf_to_data(pdf_path: str):
                             transactions.append(trans)
 
         if not transactions:
-            logging.error("No transactions extracted")
+            logging.warning("No transactions extracted")
             return None
 
+        result = {
+            'data': transactions
+        }
+
+        # Add detection results if available
+        if detection_result:
+            result['detection'] = {
+                'bank': detection_result.get('bank', 'Unknown'),
+                'format': detection_result.get('format', 'unknown'),
+                'confidence': detection_result.get('confidence', {'format': 0.0, 'bank': 0.0})
+            }
+
         logging.info(f"Successfully extracted {len(transactions)} transactions")
-        return transactions
+        return result
 
     except Exception as e:
         logging.error(f"Error in data extraction: {str(e)}")
