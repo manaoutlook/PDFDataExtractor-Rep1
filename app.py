@@ -56,15 +56,15 @@ def preview_data():
 
             logging.debug(f"Starting preview of {pdf_path}")
 
-            data = convert_pdf_to_data(pdf_path)
+            result = convert_pdf_to_data(pdf_path)
 
-            if not data:
+            if not result or not result.get('data'):
                 return jsonify({
                     'error': 'Unable to extract data from the PDF. Please ensure it contains transaction data in a table format.',
                     'details': 'The system could not identify any transaction data in the uploaded file.'
                 }), 422
 
-            return jsonify({'data': data})
+            return jsonify(result)
 
     except Exception as e:
         logging.error(f"Error during preview: {str(e)}")

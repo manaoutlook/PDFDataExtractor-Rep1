@@ -354,7 +354,10 @@ def is_date(text: str) -> bool:
     """Check if text matches date patterns"""
     date_patterns = [
         r'\d{1,2}\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)',
-        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}'
+        r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',
+        r'\d{1,2}\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)',
+        r'\d{1,2}\s*(?:january|february|march|april|may|june|july|august|september|october|november|december)',
+        r'\d{1,2}\s*(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)'
     ]
     text = text.strip().upper()
     return any(re.match(pattern, text, re.IGNORECASE) for pattern in date_patterns)
@@ -365,7 +368,8 @@ def is_amount(text: str) -> bool:
     amount_patterns = [
         r'^[\$]?\s*-?\d+(?:,\d{3})*(?:\.\d{2})?$',  # Standard format
         r'^[\$]?\s*\(?\d+(?:,\d{3})*(?:\.\d{2})?\)?$',  # Parentheses format
-        r'^[\$]?\s*\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:CR|DR)?$'  # With CR/DR suffix
+        r'^[\$]?\s*\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:CR|DR)?$',  # With CR/DR suffix
+        r'^\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?$'  # Standard currency format
     ]
     text = text.strip()
     return any(re.match(pattern, text) for pattern in amount_patterns)

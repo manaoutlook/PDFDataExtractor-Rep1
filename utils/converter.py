@@ -327,13 +327,13 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     """Convert PDF bank statement to Excel/CSV"""
     try:
         # Extract data using the improved processing logic
-        processed_data = convert_pdf_to_data(pdf_path)
+        result = convert_pdf_to_data(pdf_path)
 
-        if not processed_data:
+        if not result or not result.get('data'):
             return None
 
         # Convert to DataFrame
-        df = pd.DataFrame(processed_data)
+        df = pd.DataFrame(result['data'])
 
         # Create output file
         temp_file = tempfile.NamedTemporaryFile(delete=False)
