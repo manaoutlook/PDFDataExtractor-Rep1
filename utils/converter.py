@@ -334,8 +334,11 @@ def extract_tables_from_pdf(pdf_path, selected_areas=None, java_options=None):
         # Get PDF dimensions using PyPDF2
         with open(pdf_path, 'rb') as pdf_file:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
+            first_page = pdf_reader.pages[0]
+            pdf_width = float(first_page.mediabox.width)
+            pdf_height = float(first_page.mediabox.height)
             num_pages = len(pdf_reader.pages)
-            logging.info(f"PDF has {num_pages} pages")
+            logging.info(f"PDF has {num_pages} pages, dimensions: {pdf_width}x{pdf_height}")
 
         all_tables = []
 
@@ -350,35 +353,47 @@ def extract_tables_from_pdf(pdf_path, selected_areas=None, java_options=None):
                 if not page_areas:
                     logging.debug(f"No selected areas for page {page_num}")
                     continue
-                logging.debug(f"Found {len(page_areas)} areas for page {page_num}")
+                logging.debug(f"Found areas for page {page_num}: {page_areas}")
 
-            try:
-                # Extract tables from current page
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages=str(page_num),
-                    multiple_tables=True,
-                    guess=True,
-                    area=page_areas,
-                    relative_area=True,
-                    stream=True,
-                    lattice=True,
-                    pandas_options={'header': None},
-                    java_options=java_options
-                )
+            # Try extraction methods
+            methods = [
+                {'lattice': True, 'stream': False},
+                {'lattice': False, 'stream': True},
+                {'lattice': True, 'stream': True}
+            ]
 
-                if tables:
-                    logging.debug(f"Extracted {len(tables)} tables from page {page_num}")
-                    for idx, table in enumerate(tables):
-                        logging.debug(f"Table {idx} shape: {table.shape}")
-                        logging.debug(f"Table {idx} preview:\n{table.head()}")
-                        # Add page number to table metadata
-                        table.attrs = {'page_number': page_num}
-                    all_tables.extend(tables)
+            page_tables = []
+            for method in methods:
+                try:
+                    logging.debug(f"Trying extraction with method: {method}")
+                    tables = tabula.read_pdf(
+                        pdf_path,
+                        pages=str(page_num),
+                        multiple_tables=True,
+                        guess=True,
+                        area=page_areas[0] if page_areas else None,
+                        relative_area=False if page_areas else True,
+                        lattice=method['lattice'],
+                        stream=method['stream'],
+                        pandas_options={'header': None},
+                        java_options=java_options
+                    )
 
-            except Exception as e:
-                logging.error(f"Error extracting tables from page {page_num}: {str(e)}")
-                continue
+                    if tables:
+                        logging.debug(f"Found {len(tables)} tables with method {method}")
+                        page_tables.extend(tables)
+
+                except Exception as e:
+                    logging.error(f"Error with method {method}: {str(e)}")
+                    continue
+
+            if page_tables:
+                # Add page information to tables
+                for table in page_tables:
+                    table.attrs = {'page_number': page_num}
+                    logging.debug(f"Table shape: {table.shape}")
+                    logging.debug(f"Table preview:\n{table.head()}")
+                all_tables.extend(page_tables)
 
         if not all_tables:
             logging.error("No tables could be extracted from any page")
@@ -400,10 +415,7 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
             logging.error("PDF file not found")
             return None
 
-        # Configure Java options for headless mode
-        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
-
-        # Get PDF dimensions and total pages
+        # Get PDF dimensions and process selected areas
         with open(pdf_path, 'rb') as pdf_file:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
             first_page = pdf_reader.pages[0]
@@ -411,28 +423,30 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
             pdf_height = float(first_page.mediabox.height)
             logging.debug(f"PDF dimensions: {pdf_width}x{pdf_height}")
 
+        # Process selected areas if provided
+        area_coordinates = []
         if selected_areas:
-            logging.debug(f"Processing with selected areas: {selected_areas}")
-            # Convert selected areas to coordinates for each page
-            area_coordinates = []
+            logging.debug(f"Processing selected areas: {selected_areas}")
             for area in selected_areas:
-                # Calculate coordinates
+                # Convert relative coordinates to points
                 x1 = area['x'] * pdf_width
                 y1 = area['y'] * pdf_height
                 x2 = (area['x'] + area['width']) * pdf_width
                 y2 = (area['y'] + area['height']) * pdf_height
 
-                # Store with page information
+                # Store coordinates with page information
                 area_coords = {
                     'page': area.get('page', 1),
-                    'coords': [y1, x1, y2, x2]
+                    'coords': [y1, x1, y2, x2]  # tabula format: [top, left, bottom, right]
                 }
                 area_coordinates.append(area_coords)
-                logging.debug(f"Area coordinates for page {area_coords['page']}: {area_coords['coords']}")
+                logging.debug(f"Converted coordinates for page {area_coords['page']}: {area_coords['coords']}")
+
+        # Configure Java options
+        java_options = ['-Djava.awt.headless=true', '-Dfile.encoding=UTF8']
 
         # Extract tables from PDF
-        tables = extract_tables_from_pdf(pdf_path, area_coordinates if selected_areas else None, java_options)
-
+        tables = extract_tables_from_pdf(pdf_path, area_coordinates, java_options)
         if not tables:
             logging.error("No tables extracted from PDF")
             return None
@@ -441,10 +455,15 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
         seen_transactions = set()
 
         # Process each table
-        for page_idx, table in enumerate(tables, 1):
+        for table in tables:
+            page_num = table.attrs.get('page_number', 1)
+            logging.debug(f"Processing table from page {page_num}")
+            logging.debug(f"Table shape: {table.shape}")
+            logging.debug(f"Table preview:\n{table.head()}")
+
             if len(table.columns) >= 4:  # Basic validation
                 table.columns = range(len(table.columns))
-                page_transactions = process_transaction_rows(table, page_idx)
+                page_transactions = process_transaction_rows(table, page_num)
 
                 # Add unique transactions
                 for trans in page_transactions:
@@ -462,7 +481,7 @@ def convert_pdf_to_data(pdf_path: str, selected_areas=None):
                             logging.debug(f"Added transaction: {trans}")
 
         if not transactions:
-            logging.error("No transactions could be extracted")
+            logging.error("No valid transactions could be extracted")
             return None
 
         logging.info(f"Successfully extracted {len(transactions)} transactions")

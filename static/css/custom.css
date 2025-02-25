@@ -1,3 +1,4 @@
+/* Upload area styles */
 .upload-area {
     border: 2px dashed var(--bs-border-color) !important;
     cursor: pointer;
@@ -22,14 +23,6 @@
 
 .progress {
     height: 10px;
-}
-
-/* Prevent PDF from opening in new tab */
-.prevent-pdf-open {
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
 }
 
 /* PDF Viewer Styles */
