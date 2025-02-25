@@ -331,28 +331,35 @@ def extract_text_from_area(pdf_path: str, selected_area: Dict) -> str:
     """Extract text from a specific area of a PDF page"""
     try:
         logging.info(f"Extracting text from selected area: {selected_area}")
-        with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            page = reader.pages[selected_area.get('page', 0) - 1]
-
-            # Get page dimensions
-            page_width = float(page.mediabox.width)
-            page_height = float(page.mediabox.height)
-
-            # Convert relative coordinates to points
-            x1 = selected_area['x'] * page_width
-            y1 = (1 - selected_area['y'] - selected_area['height']) * page_height
-            x2 = (selected_area['x'] + selected_area['width']) * page_width
-            y2 = (1 - selected_area['y']) * page_height
-
-            # Extract text from the area
-            crop = {
-                '/CropBox': [x1, y1, x2, y2],
-            }
-            page.cropbox = PyPDF2.generic.RectangleObject(crop['/CropBox'])
-            text = page.extract_text()
-            logging.debug(f"Extracted text from area:\n{text}")
-            return text
+        
+        # Use tabula to extract tables from the specific area
+        area = [
+            selected_area['y'] * 100,  # top
+            selected_area['x'] * 100,  # left
+            (selected_area['y'] + selected_area['height']) * 100,  # bottom
+            (selected_area['x'] + selected_area['width']) * 100  # right
+        ]
+        
+        tables = tabula.read_pdf(
+            pdf_path,
+            pages=selected_area.get('page', 1),
+            area=area,
+            relative_area=True,
+            stream=True,
+            guess=False,
+            pandas_options={'header': None}
+        )
+        
+        if not tables:
+            return ""
+            
+        # Convert table to text
+        text = ""
+        for table in tables:
+            text += table.to_string(index=False, header=False) + "\n"
+            
+        logging.debug(f"Extracted text from area:\n{text}")
+        return text
     except Exception as e:
         logging.error(f"Error extracting text from area: {str(e)}")
         return ""
