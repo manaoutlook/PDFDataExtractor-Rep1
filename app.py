@@ -55,6 +55,7 @@ def preview_data():
             file.save(pdf_path)
 
             logging.debug(f"Starting preview of {pdf_path}")
+
             data = convert_pdf_to_data(pdf_path)
 
             if not data:

@@ -49,6 +49,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         fileInfo.classList.remove('d-none');
         fileName.textContent = file.name;
+        document.getElementById('bankName').textContent = 'Analyzing...';
+        document.getElementById('formatType').textContent = 'Analyzing...';
         previewBtn.disabled = false;
         downloadBtn.disabled = false;
         showAlert('File ready for preview and conversion!', 'success');
@@ -91,6 +93,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             const data = await response.json();
+
+            // Update bank information
+            if (data.detection) {
+                document.getElementById('bankName').textContent = data.detection.bank;
+                document.getElementById('formatType').textContent = 
+                    `${data.detection.format} (Confidence: ${Math.round(data.detection.confidence.format * 100)}%)`;
+            }
+
             populatePreviewTable(data.data);
             updateProgress(100);
             showAlert('Data preview loaded successfully!', 'success');
