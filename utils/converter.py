@@ -8,6 +8,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
 from typing import Dict
+import PyPDF2
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -241,6 +242,87 @@ def is_valid_transaction(transaction: Dict) -> bool:
     except Exception:
         return False
 
+def detect_bank_statement_type(pdf_path: str) -> str:
+    """Detect the type of bank statement based on content analysis"""
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            first_page_text = pdf_reader.pages[0].extract_text().upper()
+
+            if 'NATIONWIDE' in first_page_text:
+                return 'nationwide'
+            return 'generic'
+    except Exception as e:
+        logging.error(f"Error detecting bank statement type: {str(e)}")
+        return 'generic'
+
+def process_nationwide_statement(table):
+    """Process Nationwide bank statement specific format"""
+    try:
+        processed_data = []
+
+        # Get column indices based on header row
+        header_row = table.iloc[0]
+        date_col = None
+        desc_col = None
+        out_col = None
+        in_col = None
+        bal_col = None
+
+        for idx, col in enumerate(header_row):
+            if isinstance(col, str):
+                col_upper = col.upper()
+                if 'DATE' in col_upper:
+                    date_col = idx
+                elif 'DESCRIPTION' in col_upper:
+                    desc_col = idx
+                elif any(x in col_upper for x in ['OUT', '£ OUT', 'WITHDRAWAL']):
+                    out_col = idx
+                elif any(x in col_upper for x in ['IN', '£ IN', 'DEPOSIT']):
+                    in_col = idx
+                elif 'BALANCE' in col_upper:
+                    bal_col = idx
+
+        # Process data rows
+        for idx in range(1, len(table)):
+            row = table.iloc[idx]
+
+            # Skip empty rows
+            if row.isna().all():
+                continue
+
+            # Extract data using detected column indices
+            date = str(row[date_col]) if date_col is not None else ''
+            details = str(row[desc_col]) if desc_col is not None else ''
+            withdrawal = str(row[out_col]) if out_col is not None else ''
+            deposit = str(row[in_col]) if in_col is not None else ''
+            balance = str(row[bal_col]) if bal_col is not None else ''
+
+            # Clean up amounts
+            withdrawal = clean_amount(withdrawal)
+            deposit = clean_amount(deposit)
+            balance = clean_amount(balance)
+
+            # Skip non-transaction rows
+            if not any([withdrawal, deposit, balance]) or not details.strip():
+                continue
+
+            transaction = {
+                'Date': date.strip(),
+                'Transaction Details': details.strip(),
+                'Withdrawals ($)': withdrawal,
+                'Deposits ($)': deposit,
+                'Balance ($)': balance
+            }
+
+            if is_valid_transaction(transaction):
+                processed_data.append(transaction)
+
+        return processed_data
+    except Exception as e:
+        logging.error(f"Error processing Nationwide statement: {str(e)}")
+        return []
+
 def convert_pdf_to_data(pdf_path: str):
     """Extract data from PDF bank statement and return as list of dictionaries"""
     try:
@@ -250,6 +332,10 @@ def convert_pdf_to_data(pdf_path: str):
             logging.error("PDF file not found")
             return None
 
+        # Detect bank statement type
+        bank_type = detect_bank_statement_type(pdf_path)
+        logging.info(f"Detected bank statement type: {bank_type}")
+
         # Detect if PDF is image-based
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
@@ -258,7 +344,6 @@ def convert_pdf_to_data(pdf_path: str):
             # Process image-based PDF
             transactions = process_image_based_pdf(pdf_path)
         else:
-            # Process text-based PDF using existing logic
             # Configure Java options for headless mode
             java_options = [
                 '-Djava.awt.headless=true',
@@ -291,7 +376,12 @@ def convert_pdf_to_data(pdf_path: str):
             for page_idx, table in enumerate(tables):
                 if len(table.columns) >= 4:  # Ensure table has required columns
                     table.columns = range(len(table.columns))
-                    page_transactions = process_transaction_rows(table, page_idx)
+
+                    # Use specific processing for Nationwide statements
+                    if bank_type == 'nationwide':
+                        page_transactions = process_nationwide_statement(table)
+                    else:
+                        page_transactions = process_transaction_rows(table, page_idx)
 
                     # Add unique transactions and filter invalid ones
                     for trans in page_transactions:
