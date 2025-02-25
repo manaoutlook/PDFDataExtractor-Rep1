@@ -182,6 +182,7 @@ def convert_pdf_to_data(pdf_path: str):
         is_image_pdf = is_image_based_pdf(pdf_path)
         logging.info(f"PDF type detected: {'image-based' if is_image_pdf else 'text-based'}")
 
+        transactions = []
         if is_image_pdf:
             # Process image-based PDF
             transactions = process_image_based_pdf(pdf_path)
@@ -192,28 +193,35 @@ def convert_pdf_to_data(pdf_path: str):
                 '-Dfile.encoding=UTF8'
             ]
 
-            # Extract tables from PDF
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages='all',
-                multiple_tables=True,
-                guess=True,
-                lattice=True,
-                stream=True,
-                pandas_options={'header': None},
-                java_options=java_options
-            )
+            # Extract tables from PDF with multiple attempts
+            logging.info("Attempting table extraction")
+            try:
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages='all',
+                    multiple_tables=True,
+                    guess=True,
+                    lattice=True,
+                    stream=True,
+                    pandas_options={'header': None},
+                    java_options=java_options
+                )
+                logging.info(f"Successfully extracted {len(tables)} tables from PDF")
 
-            if not tables:
-                logging.error("No tables extracted from PDF")
+                # Process each table
+                for page_idx, table in enumerate(tables):
+                    logging.info(f"Processing table {page_idx + 1} with {len(table.columns)} columns")
+                    if len(table.columns) >= 4:
+                        table.columns = range(len(table.columns))
+                        page_transactions = process_transaction_rows(table, page_idx)
+                        transactions.extend(page_transactions)
+                        logging.info(f"Extracted {len(page_transactions)} transactions from table {page_idx + 1}")
+                    else:
+                        logging.warning(f"Table {page_idx + 1} has insufficient columns: {len(table.columns)}")
+
+            except Exception as e:
+                logging.error(f"Table extraction failed: {str(e)}")
                 return None
-
-            transactions = []
-            # Process each table
-            for page_idx, table in enumerate(tables):
-                if len(table.columns) >= 4:  # Ensure table has minimum required columns
-                    table.columns = range(len(table.columns))
-                    transactions.extend(process_transaction_rows(table, page_idx))
 
         if not transactions:
             logging.warning("No transactions extracted")
@@ -229,10 +237,11 @@ def convert_pdf_to_data(pdf_path: str):
 def convert_pdf(pdf_path: str, output_format: str = 'excel'):
     """Convert PDF bank statement to Excel/CSV"""
     try:
-        # Extract data using the improved processing logic
+        # Extract data
         result = convert_pdf_to_data(pdf_path)
 
         if not result or not result.get('data'):
+            logging.error("No data extracted for conversion")
             return None
 
         # Convert to DataFrame
@@ -265,9 +274,6 @@ def convert_pdf(pdf_path: str, output_format: str = 'excel'):
                     adjusted_width = (max_length + 2)
                     worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
 
-                # Set wrap text for transaction details
-                for cell in worksheet['B']:
-                    cell.alignment = Alignment(wrapText=True)
         else:
             output_path = f"{temp_file.name}.csv"
             df.to_csv(output_path, index=False)
