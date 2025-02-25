@@ -7,6 +7,7 @@ from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .image_processor import is_image_based_pdf, process_image_based_pdf
+from .ml_processor import format_detector
 
 def clean_amount(amount_str):
     """Clean and format amount strings"""
@@ -219,6 +220,15 @@ def convert_pdf_to_data(pdf_path: str):
         if not os.path.exists(pdf_path):
             logging.error("PDF file not found")
             return None
+
+        # Detect format and bank using ML
+        detection_result = format_detector.predict_format(pdf_path) if format_detector else {
+            "format": "unknown",
+            "bank": "Unknown",
+            "confidence": 0.0
+        }
+
+        logging.info(f"Detection result: {detection_result}")
 
         # Detect if PDF is image-based
         is_image_pdf = is_image_based_pdf(pdf_path)
